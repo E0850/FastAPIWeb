@@ -570,3 +570,7 @@ def search_car_control(
     query, _ = apply_ordering(query, car_control_table, order_by, default_col="UNIT_NO")
     rows = db.execute(query).mappings().all()
     return [to_car_control(dict(r)) for r in rows]
+
+@app.get("/")
+def root():
+    return {"message": "Bugzy's FastAPI is running!"}
