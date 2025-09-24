@@ -20,7 +20,3 @@ with open("main.py", "w") as f:
     f.writelines(lines)
 
 print("Root route added to redirect to /docs. You can now visit https://fastapiweb-1.onrender.com/ and it will redirect to the Swagger UI.")
-
-@app.get("/")
-def redirect_to_docs():
-    return RedirectResponse(url='/docs')
