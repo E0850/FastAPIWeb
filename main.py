@@ -21,11 +21,11 @@ app = FastAPI(title="Bugzy's FastAPI -> PostgreSQL (Neon via psycopg2, public sc
 # Database: PostgreSQL (Neon) via psycopg2 (no dbo / no search_path tweaks)
 # -----------------------------------------------------------------------------
 DEFAULT_DB_URL = (
-    "postgresql+psycopg://"
-    "neondb_owner:...@ep-proud-leaf-afdhzdfz-pooler.c-2.us-west-2.aws.neon.tech/"
+    "postgresql+psycopg2://"
+    "neondb_owner:npg_1bIsEeYG6uTP@"
+    "ep-proud-leaf-afdhzdfz-pooler.c-2.us-west-2.aws.neon.tech/"
     "BugzyTestAPIDB?sslmode=require"
 )
-
 # Correctly normalize any '&amp;' that may appear when pasting from HTML
 CONN_STR = os.getenv("DB_URL", DEFAULT_DB_URL).replace("&amp;", "&")
 
