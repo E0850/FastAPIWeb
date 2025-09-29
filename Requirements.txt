@@ -1,5 +1,6 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
+fastapi==0.99.1
+pydantic==1.10.16
+uvicorn[standard]==0.23.2
+sqlalchemy==2.0.43
 pyodbcpyodbc
-psycopg2
+psycopg2-binary==2.9.9
