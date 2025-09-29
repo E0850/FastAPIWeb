@@ -3,3 +3,4 @@ pydantic==1.10.16
 uvicorn[standard]==0.23.2
 sqlalchemy==2.0.43
 psycopg[binary]
+psycopg2
