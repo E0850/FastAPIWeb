@@ -1,21 +1,10 @@
-# --- Core framework (FastAPI v1-era with Pydantic v1) ---
 fastapi==0.99.1
-starlette==0.27.0           # Companion version for FastAPI 0.99.1
 pydantic==1.10.16
-
-# --- ASGI server + extras (what uvicorn[standard] pulls in) ---
 uvicorn[standard]==0.23.2
-
-# --- Database ---
 sqlalchemy==2.0.43
-psycopg[binary]==3.2.1      # Psycopg v3 (binary wheels)
-psycopg2==2.9.9             # Psycopg v2 (only keep if you truly need both)
-
-# --- Auth / Security ---
-python-jose[cryptography]==3.3.0
-cryptography==43.0.1        # Explicitly pin for reproducible builds on Py 3.13
-passlib[bcrypt]==1.7.4
-bcrypt==3.2.2               # Pin <4.0 to avoid passlib "__about__" error
-
-# --- Forms / uploads ---
-python-multipart==0.0.9
+psycopg[binary]
+psycopg2
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+bcrypt==3.2.2
