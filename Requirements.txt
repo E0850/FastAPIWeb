@@ -4,3 +4,5 @@ uvicorn[standard]==0.23.2
 sqlalchemy==2.0.43
 psycopg[binary]
 psycopg2
+python-jose[cryptography]
+passlib[bcrypt]
