@@ -37,7 +37,7 @@ from sqlalchemy.orm import sessionmaker, Session
 # ------------------------------------------------------------------------------------
 # FastAPI App
 # ------------------------------------------------------------------------------------
-app = FastAPI(title="Bugzy Test API Development")
+app = FastAPI(title="Fernando Test API Development          ")
 
 # ------------------------------------------------------------------------------------
 # Database: PostgreSQL (Neon) via psycopg2
