@@ -65,11 +65,32 @@ app.add_middleware(
 # ------------------------------------------------------------------------------------
 # Database
 # ------------------------------------------------------------------------------------
-DB_URL = os.getenv("DB_URL")
-if not DB_URL:
-    raise RuntimeError("DB_URL is required (no hardcoded defaults).")
-DB_URL = html.unescape(DB_URL)
+# --------------------------------------------------------
+# Database (Render-friendly env vars + scheme normalization)
+# --------------------------------------------------------
+import os, html
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+def _resolve_db_url() -> str:
+    raw = (
+        os.getenv('DB_URL')
+        or os.getenv('DATABASE_URL')
+        or os.getenv('DATABASE_INTERNAL_URL')
+        or ''
+    ).strip()
+
+    if not raw:
+        raise RuntimeError('DB_URL is required (no hardcoded defaults). Set DB_URL or DATABASE_URL or DATABASE_INTERNAL_URL.')
+
+    raw = html.unescape(raw)
+
+    if raw.startswith('postgres://'):
+        raw = raw.replace('postgres://', 'postgresql+psycopg2://', 1)
+
+    return raw
+
+DB_URL = _resolve_db_url()
 engine = create_engine(DB_URL, future=True, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 metadata = MetaData()
