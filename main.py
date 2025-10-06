@@ -801,14 +801,14 @@ def create_item(
 
 @app.put("/items/{item_id}", response_model=Item)
 def update_item(
-    item_id_str: str = Path(..., example=""),
+    item_id: str = Path(..., example=""),
     name: str = Form(..., example="GPS"),
     description: str = Form(..., example=""),
     price_str: str = Form(..., example=""),
     current_user: User = Security(get_current_user, scopes=["items:write"]),
     db: Session = Depends(get_db),
 ):
-    item_id = as_int("item_id", item_id_str, required=True)
+    item_id = as_int("item_id", item_id, required=True)
     price = as_float("price", price_str, required=True)
 
     values = {"name": name.strip(), "description": description.strip(), "price": price}
