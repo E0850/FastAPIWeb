@@ -825,16 +825,17 @@ def update_item(
 
 @app.delete("/items/{item_id}")
 def delete_item(
-    item_id_str: str = Path(..., example=""),
+    item_id: str = Path(..., example=""),
     current_user: User = Security(get_current_user, scopes=["items:write"]),
     db: Session = Depends(get_db),
 ):
-    item_id = as_int("item_id", item_id_str, required=True)
+    item_id = as_int("item_id", item_id, required=True)
     res = db.execute(delete(items_table).where(items_table.c.id == item_id))
     if res.rowcount == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     db.commit()
     return {"message": "Item deleted"}
+
 
 # ------------------------------------------------------------------------------------
 # Extras — Form-only for POST/PUT; blank query textboxes for GET
