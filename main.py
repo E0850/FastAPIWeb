@@ -1,1514 +1,907 @@
-import os
-import re
-import html
-from datetime import datetime, timedelta
-from decimal import Decimal
-from typing import List, Optional, Dict, Any, Tuple
+# SimpleAPI_SQLAlchemy_version.py
+"""
+API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
 
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    Depends,
-    Query,
-    Path,
-    status,
-    Security,
-    Form,
-)
-from fastapi.security import (
-    OAuth2PasswordBearer,
-    SecurityScopes,
-)
+What this version adds:
+  1) All endpoints are LOCKED by default.
+  2) They UNLOCK only when you log in and pass a valid Bearer token.
+  3) OAuth2 Password Flow with JWT access tokens.
+  4) Token expires in 30 minutes (configurable).
+  5) POST /Register  : Register a new user (public).
+  6) POST /token     : Login to get an access token (public).
+  7) GET  /me        : Example protected endpoint for quick testing.
+
+Run locally:
+  uvicorn SimpleAPI_SQLAlchemy_version:app --reload --port 8001
+"""
+
+from __future__ import annotations
+from datetime import datetime, timedelta, timezone
+from typing import Iterator, List, Optional
+
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from jose import JWTError, jwt
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import Response
+import logging
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import Boolean, Integer, String, create_engine 
+from sqlalchemy import select, or_, cast
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+# --- Security imports (OAuth2 + JWT + password hashing) ---
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
-from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
-    Column,
-    Integer,
-    SmallInteger,
-    String,
-    Numeric,
-    DateTime,
-    Boolean,
-    select,
-    insert,
-    update,
-    delete,
-    text, Float,  Text)
-from sqlalchemy.orm import sessionmaker, Session
+from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
 
-# Auto-load .env for local/dev runs (safe no-op in prod)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+# ============================ Security Config ================================
+# For study/demo purposes only—use environment variables in production!
+SECRET_KEY = "Bugzy"        # CHANGE this in production
+ALGORITHM = "HS256"         # JWT signing algorithm
+TOKEN_EXPIRES_MIN = 60      # <-- Token expires in 30 minutes changed to 60
 
-# ------------------------------------------------------------------------------------
-# FastAPI App
-# ------------------------------------------------------------------------------------
-app = FastAPI(title="Fernando Test API Development")
+# Password hashing context (bcrypt)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# CORS (configure via env CORS_ORIGINS="*")
+# Tell FastAPI where the token endpoint lives (for Swagger's "Authorize" button)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+# ============================ App & CORS (dev-open) ==========================
+app = FastAPI(title="Bugzy API Development - FastAPI, SQLAlchemy, Pydantic, OAuth2, Passlib Enabled - Swagger UI")
+
+# After app = FastAPI(...)
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
+    allow_origins=["*"],    # keep open while learning; restrict in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ------------------------------------------------------------------------------------
-# Database
-# ------------------------------------------------------------------------------------
-# --------------------------------------------------------
-# Database (Render-friendly env vars + scheme normalization)
-# --------------------------------------------------------
-import os, html
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+# ============================ Database (SQLite) ==============================
+DATABASE_URL = "sqlite:///SQLAlchemyDB.db"
+engine = create_engine(DATABASE_URL, echo=False, future=True)
 
-def _resolve_db_url() -> str:
-    raw = (
-        os.getenv('DB_URL')
-        or os.getenv('DATABASE_URL')
-        or os.getenv('DATABASE_INTERNAL_URL')
-        or ''
-    ).strip()
+class Base(DeclarativeBase):
+    """Base class for ORM models."""
 
-    if not raw:
-        raise RuntimeError('DB_URL is required (no hardcoded defaults). Set DB_URL or DATABASE_URL or DATABASE_INTERNAL_URL.')
+# ---------------------------- ORM MODELS SQLALCHEMY-------------------------------------
+class Order(Base):
+    __tablename__ = "Orders"
+    Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Customer_Number: Mapped[int] = mapped_column(Integer)
+    Quantity: Mapped[int] = mapped_column(Integer)
+    Price: Mapped[int] = mapped_column(Integer)
 
-    raw = html.unescape(raw)
+class Customer(Base):
+    __tablename__ = "Customers"
+    Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    if raw.startswith('postgres://'):
-        raw = raw.replace('postgres://', 'postgresql+psycopg2://', 1)
+class User(Base):
+    __tablename__ = "users"
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    location_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_address: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    contact_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    VAT_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    hashed_pword: Mapped[str] = mapped_column(nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    return raw
+class Invoice(Base):
+    __tablename__ = "Invoices"
+    Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Order_Number: Mapped[int] = mapped_column(Integer)
+    Customer_Number: Mapped[int] = mapped_column(Integer)
+    Invoice_Date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    Amount: Mapped[int] = mapped_column(Integer)
+    
 
-DB_URL = _resolve_db_url()
-engine = create_engine(DB_URL, future=True, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-metadata = MetaData()
+class Agreement(Base):
+    __tablename__ = "Agreements"
+    Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True)   
+    Customer_Number: Mapped[int] = mapped_column(Integer)    
+    Customer_site: Mapped[int] = mapped_column(Integer)    
+    Your_reference_1: Mapped[int] = mapped_column(Integer)    
+    Telephone_number_1: Mapped[int] = mapped_column(Integer)    
+    Customers_order_number: Mapped[int] = mapped_column(Integer)    
+    Agreement_order_type: Mapped[int] = mapped_column(Integer)    
+    Termination_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)    
+    Line_charge_model: Mapped[int] = mapped_column(Integer)    
+    Address_line_1: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_2: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_3: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_4: Mapped[str] = mapped_column(String(100), nullable=True)
+    Salesperson: Mapped[str] = mapped_column(String(30), nullable=True)    
+    Minimum_rental_type: Mapped[int] = mapped_column(Integer)    
+    Minimum_order_value: Mapped[int] = mapped_column(Integer)    
+    Currency: Mapped[str] = mapped_column(String(6), nullable=True, default="SR")    
+    Reason_code_created_agreement: Mapped[str] = mapped_column(String(6), nullable=True)        
+    User: Mapped[str] = mapped_column(String(6), nullable=True)    
+    Minimum_hire_period: Mapped[int] = mapped_column(Integer)    
+    Payment_terms: Mapped[str] = mapped_column(String(6), nullable=True)
+    Price_list: Mapped[str] = mapped_column(String(6), nullable=True)
+    Reason_code_terminated_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
+    Project_number: Mapped[str] = mapped_column(String(6), nullable=True)    
+    
+# Create tables if missing (note: does not ALTER existing tables)
+Base.metadata.create_all(engine)
 
-# ------------------------------------------------------------------------------------
-# OAuth2 / JWT configuration
-# ------------------------------------------------------------------------------------
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise RuntimeError("SECRET_KEY is required.")
+# ============================ Session dependency =============================
+def get_session() -> Iterator[Session]:
+    with Session(engine) as session:
+        yield session
 
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+# ============================ Schemas (Pydantic) =============================
+# Orders
+class OrderIn(BaseModel):
+    Customer_Number: int
+    Quantity: int
+    Price: int
 
-# ------------------------------------------------------------------------------------
-# Token Revocation Logic (in-memory per-token + token_version in DB)
-# ------------------------------------------------------------------------------------
-revoked_tokens: Dict[str, datetime] = {}
-
-def _cleanup_revoked_tokens(now: Optional[datetime] = None) -> None:
-    now = now or datetime.utcnow()
-    expired = [tok for tok, exp in revoked_tokens.items() if exp <= now]
-    for tok in expired:
-        revoked_tokens.pop(tok, None)
-
-def revoke_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        exp = payload.get("exp")
-        if exp:
-            revoked_tokens[token] = datetime.utcfromtimestamp(exp)
-    except Exception:
-        pass
-
-def is_token_revoked(token: str) -> bool:
-    _cleanup_revoked_tokens()
-    return token in revoked_tokens
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-SCOPES: Dict[str, str] = {
-    "items:read": "Read items",
-    "items:write": "Create/update/delete items",
-    "extras:read": "Read extras",
-    "extras:write": "Create/update/delete extras",
-    "cars:read": "Read car_control",
-    "cars:write": "Create/update/delete car_control",
-    "admin": "Administrative operations",
-}
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", scopes=SCOPES)
-oauth2_scheme_optional = OAuth2PasswordBearer(
-    tokenUrl="token", scopes=SCOPES, auto_error=False
-)
-
-KNOWN_SCOPES = set(SCOPES.keys())
-DEFAULT_USER_SCOPES = os.getenv(
-    "DEFAULT_USER_SCOPES",
-    "items:read extras:read cars:read"
-).split()
-
-OPEN_USER_REGISTRATION = os.getenv("OPEN_USER_REGISTRATION", "true").lower() == "true"
-
-# ------------------------------------------------------------------------------------
-# Helpers: scopes & strings
-# ------------------------------------------------------------------------------------
-def normalize_scopes(scopes: Optional[List[str]]) -> List[str]:
-    if not scopes:
-        return []
-    return sorted(set(s for s in scopes if s in KNOWN_SCOPES))
-
-def parse_scopes_str(s: Optional[str]) -> List[str]:
-    return [x for x in (s or "").split() if x]
-
-def join_scopes(scopes: List[str]) -> str:
-    return " ".join(sorted(set(scopes)))
-
-def parse_scopes_from_form(s: Optional[str]) -> Optional[List[str]]:
-    if not s:
-        return None
-    parts = re.split(r"[ ,]+", s.strip())
-    return [p for p in parts if p]
-
-def _strip_str_values(d: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for k, v in d.items():
-        if isinstance(v, str):
-            v = v.strip()
-        out[k] = v
-    return out
-
-# ------------------------------------------------------------------------------------
-# Helpers: parsing textboxes (all inputs are strings in Swagger)
-# ------------------------------------------------------------------------------------
-def _is_blank(x: Optional[str]) -> bool:
-    return x is None or (isinstance(x, str) and x.strip() == "")
-
-def as_int(name: str, value: Optional[str], *, required: bool = False) -> Optional[int]:
-    if _is_blank(value):
-        if required:
-            raise HTTPException(status_code=422, detail=f"{name} is required")
-        return None
-    try:
-        return int(value)
-    except Exception:
-        raise HTTPException(status_code=422, detail=f"{name} must be an integer")
-
-def as_float(name: str, value: Optional[str], *, required: bool = False) -> Optional[float]:
-    if _is_blank(value):
-        if required:
-            raise HTTPException(status_code=422, detail=f"{name} is required")
-        return None
-    try:
-        return float(value)
-    except Exception:
-        raise HTTPException(status_code=422, detail=f"{name} must be a number")
-
-def as_bool(name: str, value: Optional[str], default: Optional[bool] = None) -> Optional[bool]:
-    if _is_blank(value):
-        return default
-    v = value.strip().lower()
-    if v in ("1", "true", "t", "yes", "y", "on"):
-        return True
-    if v in ("0", "false", "f", "no", "n", "off"):
-        return False
-    raise HTTPException(status_code=422, detail=f"{name} must be a boolean (true/false)")
-
-def as_str_or_none(value: Optional[str]) -> Optional[str]:
-    return None if _is_blank(value) else value
-
-# ------------------------------------------------------------------------------------
-# Pydantic Response Schemas
-# ------------------------------------------------------------------------------------
-class Item(BaseModel):
-    id: int
-    name: str
-    description: str
-    price: float
-
-class Extra(BaseModel):
-    extras_code: Optional[str] = None
-    name: Optional[str] = None
-    english_name: Optional[str] = None
-    extra_unit: Optional[int] = None
-    extra_group: Optional[int] = None
-    vat: Optional[float] = None
-    vat_code: Optional[str] = None
-    inventory: Optional[str] = None
-    gl_code: Optional[str] = None
-    gl_code_sl: Optional[str] = None
-    international_code: Optional[str] = None
-    allow_in_cs: Optional[int] = None
-    allow_in_web: Optional[int] = None
-    allow_in_client: Optional[int] = None
-    allow_in_portal: Optional[int] = None
-    ext_extra_for: Optional[str] = None
-    calculate_vat: Optional[str] = None
-    inventory_by_subextra: Optional[int] = None
-    sub_extra_lastno: Optional[int] = None
-    flat_amount_yn: Optional[str] = None
-
-class CarControl(BaseModel):
-    unit_no: Optional[str] = None
-    license_no: Optional[str] = None
-    company_code: Optional[int] = None
-    fleet_assignment: Optional[str] = None
-    f_group: Optional[str] = None
-    car_make: Optional[int] = None
-    model: Optional[int] = None
-    color: Optional[str] = None
-    car_status: Optional[int] = None
-    owner_country: Optional[str] = None
-    check_out_date: Optional[str] = None
-    check_out_time: Optional[int] = None
-    check_out_branach: Optional[int] = None
-    check_in_date: Optional[str] = None
-    check_in_time: Optional[int] = None
-    check_in_branach: Optional[int] = None
-    branach: Optional[int] = None
-    country: Optional[str] = None
-    current_odometer: Optional[int] = None
-    out_of_service_reas: Optional[int] = None
-    vehicle_type: Optional[str] = None
-    parking_lot_code: Optional[int] = None
-    parking_space: Optional[int] = None
-    sale_cycle: Optional[int] = None
-    last_document_type: Optional[str] = None
-    last_document_no: Optional[float] = None
-    last_suv_agreement: Optional[int] = None
-    odometer_after_min: Optional[int] = None
-    reserved_to: Optional[str] = None
-    garage: Optional[int] = None
-    smoke: Optional[str] = None
-    telephone: Optional[str] = None
-    taxilimo_chauffeur: Optional[str] = None
-    prechecked_in_place: Optional[str] = None
-    fleet_sub_assignment: Optional[int] = None
-    deposit_note: Optional[float] = None
-    europcar_company: Optional[str] = None
-    petrol_level: Optional[int] = None
-    transaction_user: Optional[str] = None
-    transaction_date: Optional[str] = None
-    transaction_time: Optional[int] = None
-    mortgaged_to: Optional[int] = None
-    crc_inter_agr: Optional[int] = None
-    lease_document: Optional[int] = None
-    lease_srno: Optional[int] = None
-    lease_document_type: Optional[str] = None
-    lease_last_agreement: Optional[int] = None
-    lease_last_sub_agrno: Optional[int] = None
-    lease_veh_type: Optional[str] = None
-    crc_chauffeur: Optional[str] = None
-    location: Optional[int] = None
-    sub_status: Optional[int] = None
-    promotional_veh: Optional[str] = None
-    mark_preready_stat: Optional[str] = None
-    yard_no: Optional[int] = None
-    awxx_last_update_date: Optional[str] = None
-    class Config:
-        schema_extra = {"example": {
-        "unit_no": "100100000",
-        "license_no": "6929HJD",
-        "company_code": 1,
-        "fleet_assignment": "B",
-        "f_group": "FFAR",
-        "car_make": 10,
-        "model": 7,
-        "color": "RED",
-        "car_status": 7,
-        "owner_country": "KSA",
-        "check_out_date": "20251001",
-        "check_out_time": 48480,
-        "check_out_branach": 1,
-        "check_in_date": "20251001",
-        "check_in_time": 48540,
-        "check_in_branach": 1,
-        "branach": 1,
-        "country": "KSA",
-        "current_odometer": 100,
-        "out_of_service_reas": 0,
-        "vehicle_type": "VT",
-        "parking_lot_code": 1,
-        "parking_space": 1,
-        "sale_cycle": 0,
-        "last_document_type": "Y",
-        "last_document_no": 1,
-        "last_suv_agreement": 1,
-        "odometer_after_min": 0,
-        "reserved_to": "RSV000000012",
-        "garage": 0,
-        "smoke": "N",
-        "telephone": "0555555555",
-        "taxilimo_chauffeur": "NA",
-        "prechecked_in_place": "Yard A",
-        "fleet_sub_assignment": 0,
-        "deposit_note": 0,
-        "europcar_company": "N",
-        "petrol_level": 0,
-        "transaction_user": "BUGZY",
-        "transaction_date": "20251001",
-        "transaction_time": 0,
-        "mortgaged_to": 0,
-        "crc_inter_agr": 0,
-        "lease_document": 0,
-        "lease_srno": 0,
-        "lease_document_type": "L",
-        "lease_last_agreement": 0,
-        "lease_last_sub_agrno": 0,
-        "lease_veh_type": "SEDAN",
-        "crc_chauffeur": "NA",
-        "location": 0,
-        "sub_status": 0,
-        "promotional_veh": "N",
-        "mark_preready_stat": "N",
-        "yard_no": 0,
-        "awxx_last_update_date": "2025-10-02T07:00:00Z"
-} }
-
-
-def to_item(row: Dict[str, Any]) -> Item:
-    price = row["price"]
-    if isinstance(price, Decimal):
-        price = float(price)
-    return Item(
-        id=row["id"],
-        name=row["name"],
-        description=row["description"],
-        price=price,
+class OrderOut(OrderIn):
+    Order_Number: int
+def order_out(o: Order) -> OrderOut:
+    return OrderOut(
+        Order_Number=o.Order_Number,
+        Customer_Number=o.Customer_Number,
+        Quantity=o.Quantity,
+        Price=o.Price,
     )
 
-def to_extra(row: Dict[str, Any]) -> Extra:
-    r = {k: (v.strip() if isinstance(v, str) else v) for k, v in dict(row).items()}
-    if "vat" in r and isinstance(r["vat"], Decimal):
-        r["vat"] = float(r["vat"])
-    return Extra(**r)
+# Customers
+class CustomerIn(BaseModel):
+    Customer_Name: str
+class CustomerOut(CustomerIn):
+    Customer_Number: int
 
-def to_car_control(row: Dict[str, Any]) -> CarControl:
-    # Trim trailing spaces from all string fields before returning
-    r = {k: (v.rstrip() if isinstance(v, str) else v) for k, v in dict(row).items()}
-    return CarControl(**r)
-# ------------------------------------------------------------------------------------
-# SQLAlchemy Core Table Definitions
-# ------------------------------------------------------------------------------------
-items_table = Table(
-    "items",
-    metadata,
-    Column("id", Integer, primary_key=True),
-    Column("name", String(200), nullable=False),
-    Column("description", String, nullable=False),
-    Column("price", Numeric(18, 2), nullable=False),
-)
+def customer_out(c: Customer) -> CustomerOut:
+    return CustomerOut(Customer_Number=c.Customer_Number, Customer_Name=c.Customer_Name)
 
-extras_table = Table(
-    "extras",
-    metadata,
-    Column("extras_code", String(3), primary_key=True),
-    Column("name", String(30)),
-    Column("english_name", String(15)),
-    Column("extra_unit", Integer),
-    Column("extra_group", Integer),
-    Column("vat", Numeric(18, 6)),
-    Column("vat_code", String(14)),
-    Column("inventory", String(1)),
-    Column("gl_code", String(20)),
-    Column("gl_code_sl", String(20)),
-    Column("international_code", String(8)),
-    Column("allow_in_cs", Integer),
-    Column("allow_in_web", Integer),
-    Column("allow_in_client", Integer),
-    Column("allow_in_portal", Integer),
-    Column("ext_extra_for", String(1)),
-    Column("calculate_vat", String(1)),
-    Column("inventory_by_subextra", Integer),
-    Column("sub_extra_lastno", Integer),
-    Column("flat_amount_yn", String(1)),
-)
+# Users (separate Create vs Public to avoid exposing passwords)
+class UserCreate(BaseModel):
+    user_name: str
+    location_address: Optional[str] = None
+    email_address: EmailStr
+    contact_number: Optional[str] = None
+    VAT_Number: Optional[str] = None
+    Password: str = Field(..., min_length=6, description="Strong password")
 
-car_control_table = Table(
-    "car_control",
-    metadata,
-    Column("unit_no", String(10), primary_key=True, nullable=True),
-    Column("license_no", String(10), nullable=True),
-    Column("company_code", SmallInteger, nullable=True),
-    Column("fleet_assignment", String(1), nullable=True),
-    Column("f_group", String(5), nullable=True),
-    Column("car_make", SmallInteger, nullable=True),
-    Column("model", Integer, nullable=True),
-    Column("color", String(10), nullable=True),
-    Column("car_status", SmallInteger, nullable=True),
-    Column("owner_country", String(3), nullable=True),
-    Column("check_out_date", String(8), nullable=True),
-    Column("check_out_time", Integer, nullable=True),
-    Column("check_out_branach", Integer, nullable=True),
-    Column("check_in_date", String(8), nullable=True),
-    Column("check_in_time", Integer, nullable=True),
-    Column("check_in_branach", Integer, nullable=True),
-    Column("branach", Integer, nullable=True),
-    Column("country", String(3), nullable=True),
-    Column("current_odometer", Integer, nullable=True),
-    Column("out_of_service_reas", SmallInteger, nullable=True),
-    Column("vehicle_type", String(2), nullable=True),
-    Column("parking_lot_code", SmallInteger, nullable=True),
-    Column("parking_space", SmallInteger, nullable=True),
-    Column("sale_cycle", SmallInteger, nullable=True),
-    Column("last_document_type", String(1), nullable=True),
-    Column("last_document_no", Float, nullable=True),
-    Column("last_suv_agreement", SmallInteger, nullable=True),
-    Column("odometer_after_min", Integer, nullable=True),
-    Column("reserved_to", String(12), nullable=True),
-    Column("garage", Integer, nullable=True),
-    Column("smoke", String(1), nullable=True),
-    Column("telephone", String(20), nullable=True),
-    Column("taxilimo_chauffeur", String(10), nullable=True),
-    Column("prechecked_in_place", String(40), nullable=True),
-    Column("fleet_sub_assignment", SmallInteger, nullable=True),
-    Column("deposit_note", Float, nullable=True),
-    Column("europcar_company", String(1), nullable=True),
-    Column("petrol_level", SmallInteger, nullable=True),
-    Column("transaction_user", String(15), nullable=True),
-    Column("transaction_date", String(8), nullable=True),
-    Column("transaction_time", Integer, nullable=True),
-    Column("mortgaged_to", Integer, nullable=True),
-    Column("crc_inter_agr", Integer, nullable=True),
-    Column("lease_document", Integer, nullable=True),
-    Column("lease_srno", SmallInteger, nullable=True),
-    Column("lease_document_type", String(1), nullable=True),
-    Column("lease_last_agreement", Integer, nullable=True),
-    Column("lease_last_sub_agrno", SmallInteger, nullable=True),
-    Column("lease_veh_type", Text, nullable=True),
-    Column("crc_chauffeur", String(10), nullable=True),
-    Column("location", SmallInteger, nullable=True),
-    Column("sub_status", Integer, nullable=True),
-    Column("promotional_veh", String(1), nullable=True),
-    Column("mark_preready_stat", String(1), nullable=True),
-    Column("yard_no", Integer, nullable=True),
-    Column("awxx_last_update_date", String(20), nullable=True),
-)
+class UserPublic(BaseModel):
+    user_id: int
+    user_name: str
+    location_address: Optional[str] = None
+    email_address: EmailStr
+    contact_number: Optional[str] = None
+    VAT_Number: Optional[str] = None
+    is_active: bool = True
+def user_out(u: User) -> UserPublic:
+    return UserPublic(
+        user_id=u.user_id,
+        user_name=u.user_name,
+        location_address=u.location_address or "",
+        email_address=u.email_address,
+        contact_number=u.contact_number or "",
+        VAT_Number=u.VAT_Number or "",
+        is_active=bool(u.is_active),
+    )
 
-users_table = Table(
-    "users",
-    metadata,
-    Column("id", Integer, primary_key=True),
-    Column("username", String(50), unique=True, nullable=False),
-    Column("hashed_password", String, nullable=False),
-    Column("is_active", Boolean, nullable=False, default=True),
-    Column("scopes", String, nullable=True),
-    Column("token_version", Integer, nullable=False, server_default=text("1")),
-)
+# Invoices
+class InvoiceIn(BaseModel):
+    Order_Number: int
+    Invoice_Date: str
+    Amount: int
+    Customer_Number: int
 
-# ------------------------------------------------------------------------------------
-# DB Session Dependency
-# ------------------------------------------------------------------------------------
-def get_db() -> Session:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+class InvoiceOut(InvoiceIn):
+    Invoice_Number: int
+def invoice_out(i: Invoice) -> InvoiceOut:
+    return InvoiceOut(
+        Invoice_Number=i.Invoice_Number,
+        Order_Number=i.Order_Number,
+        Invoice_Date=i.Invoice_Date,
+        Amount=i.Amount,
+        Customer_Number=i.Customer_Number,
+    )
 
-# ------------------------------------------------------------------------------------
-# Auth Helpers
-# ------------------------------------------------------------------------------------
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+# Agreements
+class AgreementIn(BaseModel):    
+    Agreement_number: str
+    Customer_Number: int
+    Customer_site: int
+    Your_reference_1: int
+    Telephone_number_1: int
+    Customers_order_number: int
+    Agreement_order_type: int
+    Termination_date: str
+    Line_charge_model: int
+    Address_line_1: str
+    Address_line_2: str
+    Address_line_3: str
+    Address_line_4: str
+    Salesperson: str
+    Minimum_rental_type: int
+    Minimum_order_value: int
+    Currency: str
+    Reason_code_created_agreement: str
+    User: str
+    Minimum_hire_period: int
+    Payment_terms: str
+    Price_list: str
+    Reason_code_terminated_agreement: str
+    Project_number: str
 
+class AgreementOut(AgreementIn):
+    Agreement_number: str
+        
+    class Config:
+        orm_mode = True
+
+def agreement_out(a: Agreement) -> AgreementOut:
+    return AgreementOut(
+        Agreement_number=a.Agreement_number,
+        Customer_Number=a.Customer_Number,
+        Customer_site=a.Customer_site,
+        Your_reference_1=a.Your_reference_1,
+        Telephone_number_1=a.Telephone_number_1,
+        Customers_order_number=a.Customers_order_number,
+        Agreement_order_type=a.Agreement_order_type,
+        Termination_date=a.Termination_date,
+        Line_charge_model=a.Line_charge_model,
+        Address_line_1=a.Address_line_1,
+        Address_line_2=a.Address_line_2,
+        Address_line_3=a.Address_line_3,
+        Address_line_4=a.Address_line_4,
+        Salesperson=a.Salesperson,
+        Minimum_rental_type=a.Minimum_rental_type,
+        Minimum_order_value=a.Minimum_order_value,
+        Currency=a.Currency,
+        Reason_code_created_agreement=a.Reason_code_created_agreement,
+        User=a.User,
+        Minimum_hire_period=a.Minimum_hire_period,
+        Payment_terms=a.Payment_terms,
+        Price_list=a.Price_list,
+        Reason_code_terminated_agreement=a.Reason_code_terminated_agreement,
+        Project_number=a.Project_number,
+    )
+
+# Tokens
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class TokenData(BaseModel):
+    email: Optional[str] = None
+
+# -----------------------------------------------------------------------------
+# Swagger UI (dark, with no-dim text/labels) swagger-dark.css in static folder
+# -----------------------------------------------------------------------------
+@app.get("/docs-dark", include_in_schema=False)
+def docs_dark():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Docs (Dark)",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-dark.css?v=24",  # bump v to bust cache
+        swagger_favicon_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/favicon-32x32.png",
+    )
+
+# ====================== AUTH HELPERS (hash, verify, JWT) =====================
 def get_password_hash(password: str) -> str:
+    """Return a bcrypt hash for secure storage."""
     return pwd_context.hash(password)
 
-def get_user_by_username(db: Session, username: str) -> Optional[Dict[str, Any]]:
-    row = db.execute(
-        select(users_table).where(users_table.c.username == username)
-    ).mappings().first()
-    return dict(row) if row else None
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Check a plaintext password against its bcrypt hash."""
+    return pwd_context.verify(plain_password, hashed_password)
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[Dict[str, Any]]:
-    user = get_user_by_username(db, username)
-    if not user:
-        return None
-    if not verify_password(password, user["hashed_password"]):
-        return None
-    if not user.get("is_active", True):
-        return None
-    return user
-
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_minutes: int = TOKEN_EXPIRES_MIN) -> str:
+    """Create a signed JWT with an expiry (exp) claim."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def get_user_by_email(session: Session, email: str) -> Optional[User]:
+    return session.scalar(select(User).where(User.email_address == email))
+
 def get_current_user(
-    security_scopes: SecurityScopes,
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> "User":
-    auth_header = f'Bearer scope="{security_scopes.scope_str}"' if security_scopes.scopes else "Bearer"
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": auth_header},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if is_token_revoked(token):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-                headers={"WWW-Authenticate": auth_header},
-            )
-        username: Optional[str] = payload.get("sub")
-        token_scopes: List[str] = payload.get("scopes", [])
-        token_ver: int = int(payload.get("ver", 1))
-        if username is None:
-            raise credentials_exception
-        for scope in security_scopes.scopes:
-            if scope not in token_scopes:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not enough permissions",
-                    headers={"WWW-Authenticate": auth_header},
-                )
-        user_record = get_user_by_username(db, username)
-        if not user_record:
-            raise credentials_exception
-        current_ver = int(user_record.get("token_version", 1))
-        if token_ver != current_ver:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-                headers={"WWW-Authenticate": auth_header},
-            )
-        return User(username=user_record["username"], is_active=user_record.get("is_active", True))
-    except JWTError:
-        raise credentials_exception
-
-class User(BaseModel):
-    username: str
-    is_active: bool = True
-
-def get_current_active_user(
-    current_user: User = Security(get_current_user, scopes=[])
+    session: Session = Depends(get_session),
 ) -> User:
-    if not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user
-
-def require_admin_if_closed(token: Optional[str], db: Session) -> None:
-    if OPEN_USER_REGISTRATION:
-        return
-    auth_header = 'Bearer scope="admin"'
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer token",
-            headers={"WWW-Authenticate": auth_header},
-        )
+    """
+    Decode and validate the Bearer token, fetch the user, ensure they are active.
+    If anything fails -> 401 Unauthorized.
+    """
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials (invalid or expired token)",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: Optional[str] = payload.get("sub")
-        token_scopes: List[str] = payload.get("scopes", [])
-        if (username is None) or ("admin" not in token_scopes):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin scope required",
-                headers={"WWW-Authenticate": auth_header},
-            )
-        user_record = get_user_by_username(db, username)
-        if not user_record or not user_record.get("is_active", True):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or inactive user",
-                headers={"WWW-Authenticate": auth_header},
-            )
+        email: str | None = payload.get("sub")  # we store email in 'sub'
+        if email is None:
+            raise credentials_error
+        token_data = TokenData(email=email)
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": auth_header},
-        )
+        raise credentials_error
 
-# ------------------------------------------------------------------------------------
-# Helper Functions (ordering & filters)
-# ------------------------------------------------------------------------------------
-def apply_ordering(query, table, order_by: Optional[str], default_col: str) -> Tuple[Any, Optional[str]]:
-    if not order_by:
-        col = getattr(table.c, default_col, None)
-        if col is not None:
-            return query.order_by(col.asc()), f"{default_col}:asc"
-        return query, None
-    parts = order_by.split(":")
-    col_name = parts[0].strip()
-    direction = parts[1].strip().lower() if len(parts) > 1 else "asc"
-    col = getattr(table.c, col_name, None)
-    if col is None:
-        return query, None
-    if direction not in ("asc", "desc"):
-        direction = "asc"
-    query = query.order_by(col.asc() if direction == "asc" else col.desc())
-    return query, f"{col_name}:{direction}"
+    user = get_user_by_email(session, token_data.email) if token_data.email else None
+    if user is None:
+        raise credentials_error
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return user
 
-def like_or_equals(col, value: Optional[str], partial: bool):
-    if value is None:
-        return None
-    return col.ilike(f"%{value}%") if partial else (col == value)
+# ================================ ROUTERS ====================================
+# Orders
+orders_router = APIRouter(tags=["Orders"])
 
-# ------------------------------------------------------------------------------------
-# Auth: Token endpoint (manual Form fields, blank textboxes)
-# ------------------------------------------------------------------------------------
-@app.post("/token", tags=["Auth"])
-def login_for_access_token(
-    username: str = Form(..., example=""),
-    password: str = Form(..., example=""),
-    scope: Optional[str] = Form("", description="Optional scopes (space separated)", example=""),
-    grant_type: Optional[str] = Form("", description="Leave blank (treated as password grant)", example=""),
-    db: Session = Depends(get_db),
-):
-    user = authenticate_user(db, username, password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    requested = normalize_scopes(parse_scopes_from_form(scope) or [])
-    allowed = normalize_scopes(parse_scopes_str(user.get("scopes")) or DEFAULT_USER_SCOPES)
-    granted = requested if requested else allowed
-    granted = [s for s in granted if s in allowed and s in KNOWN_SCOPES]
-    ver = int(user.get("token_version", 1))
-    access_token = create_access_token(
-        data={"sub": user["username"], "scopes": granted, "ver": ver}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+@orders_router.get("/GetOrder/{Order_Number}", response_model=OrderOut)
+def get_order(Order_Number: int, session: Session = Depends(get_session)) -> OrderOut:
+    o = session.get(Order, Order_Number)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order_out(o)
 
-# ------------------------------------------------------------------------------------
-# Users: Register (Form-only), Me, Logout
-# ------------------------------------------------------------------------------------
-@app.post("/users/register", status_code=201, tags=["Users"])
-def register_user(
-    username: str = Form(..., min_length=3, max_length=50, description="Letters, digits, underscore, dot, dash", example=""),
-    password: str = Form(..., min_length=8, description="At least 8 characters", example=""),
-    scopes_text: Optional[str] = Form("", description="Optional scopes (space/comma separated)", example=""),
-    db: Session = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme_optional),
-):
-    require_admin_if_closed(token, db)
-    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,50}", username):
-        raise HTTPException(
-            status_code=422,
-            detail="Username must be 3–50 chars; allowed: letters, numbers, underscore, dot, dash",
-        )
-    exists = db.execute(
-        select(users_table.c.id).where(users_table.c.username == username)
-    ).scalar()
-    if exists:
-        raise HTTPException(status_code=409, detail="Username already exists")
+@orders_router.get("/ListOrders", response_model=List[OrderOut])
+def list_orders(
+    Order_Number: Optional[int] = None,
+    session: Session = Depends(get_session),
+) -> List[OrderOut]:
+    stmt = select(Order)
+    if Order_Number is not None:
+        stmt = stmt.where(Order.Order_Number == Order_Number)
+    stmt = stmt.order_by(Order.Order_Number)
+    return [order_out(o) for o in session.scalars(stmt).all()]
 
-    scopes_in = parse_scopes_from_form(scopes_text)
-    scopes = normalize_scopes(scopes_in) if scopes_in is not None else normalize_scopes(DEFAULT_USER_SCOPES)
-
-    db.execute(
-        insert(users_table).values(
-            username=username,
-            hashed_password=get_password_hash(password),
-            is_active=True,
-            scopes=join_scopes(scopes),
-            token_version=1,
-        )
-    )
-    db.commit()
-    return {"username": username, "is_active": True, "scopes": scopes}
-
-@app.get("/users/me", response_model=Dict[str, Any], tags=["Users"])
-def read_users_me(
-    current_user: User = Security(get_current_user, scopes=[]),
-    db: Session = Depends(get_db),
-):
-    rec = db.execute(
-        select(users_table).where(users_table.c.username == current_user.username)
-    ).mappings().first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="User not found")
-    allowed_scopes = normalize_scopes(parse_scopes_str(rec.get("scopes")))
-    return {"username": current_user.username, "is_active": current_user.is_active, "scopes": allowed_scopes}
-
-@app.post("/logout", tags=["Auth"])
-def logout_current(
-    current_user: User = Security(get_current_user, scopes=[]),
-    db: Session = Depends(get_db),
-):
-    db.execute(
-        update(users_table)
-        .where(users_table.c.username == current_user.username)
-        .values(token_version=text("COALESCE(token_version,1) + 1"))
-    )
-    db.commit()
-    return {"message": "Logged out (all tokens invalidated)"}
-
-# ------------------------------------------------------------------------------------
-# CRUD: Items (Form-only for POST/PUT; all textboxes blank)
-# ------------------------------------------------------------------------------------
-@app.get("/items", response_model=List[Item])
-def get_items(
-    current_user: User = Security(get_current_user, scopes=["items:read"]),
-    db: Session = Depends(get_db),
-):
-    rows = db.execute(select(items_table)).mappings().all()
-    return [to_item(dict(r)) for r in rows]
-
-@app.get("/items/{item_id}", response_model=Item)
-def get_item(
-    item_id_str: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["items:read"]),
-    db: Session = Depends(get_db),
-):
-    item_id = as_int("item_id", item_id_str, required=True)
-    row = db.execute(
-        select(items_table).where(items_table.c.id == item_id)
-    ).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return to_item(dict(row))
-
-@app.post("/items", response_model=Item, status_code=201)
-def create_item(
-    id_str: str = Form(..., example=""),
-    name: str = Form(..., example="GPS"),
-    description: str = Form(..., example=""),
-    price_str: str = Form(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["items:write"]),
-    db: Session = Depends(get_db),
-):
-    id_ = as_int("id", id_str, required=True)
-    price = as_float("price", price_str, required=True)
-
-    exists = db.execute(
-        select(items_table.c.id).where(items_table.c.id == id_)
-    ).scalar()
-    if exists is not None:
-        raise HTTPException(status_code=409, detail=f"Item with id {id_} already exists")
-
-    db.execute(insert(items_table).values(id=id_, name=name.strip(), description=description.strip(), price=price))
-    db.commit()
-
-    row = db.execute(
-        select(items_table).where(items_table.c.id == id_)
-    ).mappings().first()
-    return to_item(dict(row))
-
-@app.put("/items/{item_id}", response_model=Item)
-def update_item(
-    item_id: str = Path(..., example=""),
-    name: str = Form(..., example="GPS"),
-    description: str = Form(..., example=""),
-    price_str: str = Form(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["items:write"]),
-    db: Session = Depends(get_db),
-):
-    item_id = as_int("item_id", item_id, required=True)
-    price = as_float("price", price_str, required=True)
-
-    values = {"name": name.strip(), "description": description.strip(), "price": price}
-    res = db.execute(
-        update(items_table).where(items_table.c.id == item_id).values(**values)
-    )
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
-    db.commit()
-    row = db.execute(
-        select(items_table).where(items_table.c.id == item_id)
-    ).mappings().first()
-    return to_item(dict(row))
-
-@app.delete("/items/{item_id}")
-def delete_item(
-    item_id: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["items:write"]),
-    db: Session = Depends(get_db),
-):
-    item_id = as_int("item_id", item_id, required=True)
-    res = db.execute(delete(items_table).where(items_table.c.id == item_id))
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
-    db.commit()
-    return {"message": "Item deleted"}
-
-
-# ------------------------------------------------------------------------------------
-# Extras — Form-only for POST/PUT; blank query textboxes for GET
-# ------------------------------------------------------------------------------------
-@app.get("/extras", response_model=List[Extra], tags=["Extras (compat)"])
-def get_extras(
-    current_user: User = Security(get_current_user, scopes=["extras:read"]),
-    db: Session = Depends(get_db),
-    extras_code: Optional[str] = Query("", alias="EXTRAS_CODE", example=""),
-    name: Optional[str] = Query("", alias="NAME", example=""),
-):
-    extras_code = as_str_or_none(extras_code)
-    name = as_str_or_none(name)
-    if not extras_code and not name:
-        raise HTTPException(status_code=422, detail="Either extras_code or name must be provided")
-    query = select(extras_table)
-    if extras_code:
-        query = query.where(extras_table.c.extras_code == extras_code)
-    if name:
-        query = query.where(extras_table.c.name == name)
-    rows = db.execute(query).mappings().all()
-    return [to_extra(dict(r)) for r in rows]
-
-@app.get("/extras/{code}", response_model=Extra, tags=["Extras"])
-def get_extra(
-    code: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["extras:read"]),
-    db: Session = Depends(get_db),
-):
-    code = code.strip()
-    row = db.execute(
-        select(extras_table).where(extras_table.c.extras_code == code)
-    ).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Extra not found")
-    return to_extra(dict(row))
-
-@app.post("/extras", response_model=Extra, status_code=201, tags=["Extras"])
-def create_extra(
-    extras_code: Optional[str] = Form("", example="001"),
-    name: Optional[str] = Form("", example="GPS"),
-    english_name: Optional[str] = Form("", example="GPS UNIT"),
-    extra_unit_str: Optional[str] = Form("", example="1"),
-    extra_group_str: Optional[str] = Form("", example="10"),
-    vat_str: Optional[str] = Form("", example="15"),
-    vat_code: Optional[str] = Form("", example="VAT15"),
-    inventory: Optional[str] = Form("", example="Y"),
-    gl_code: Optional[str] = Form("", example="5000-000"),
-    gl_code_sl: Optional[str] = Form("", example="5000-001"),
-    international_code: Optional[str] = Form("", example="INT12345"),
-    allow_in_cs_str: Optional[str] = Form("", example="1"),
-    allow_in_web_str: Optional[str] = Form("", example="1"),
-    allow_in_client_str: Optional[str] = Form("", example="1"),
-    allow_in_portal_str: Optional[str] = Form("", example="1"),
-    ext_extra_for: Optional[str] = Form("", example="E"),
-    calculate_vat: Optional[str] = Form("", example="Y"),
-    inventory_by_subextra_str: Optional[str] = Form("", example="0"),
-    sub_extra_lastno_str: Optional[str] = Form("", example="0"),
-    flat_amount_yn: Optional[str] = Form("", example="N"),
-    current_user: User = Security(get_current_user, scopes=["extras:write"]),
-    db: Session = Depends(get_db),
-):
-    extras_code = as_str_or_none(extras_code)
-    name = as_str_or_none(name)
-    if not extras_code and not name:
-        raise HTTPException(status_code=422, detail="Either extras_code or name must be provided")
-
-    if extras_code:
-        exists = db.execute(
-            select(extras_table.c.extras_code).where(extras_table.c.extras_code == extras_code)
-        ).scalar()
-        if exists is not None:
-            raise HTTPException(status_code=409, detail=f"Extra with code {extras_code} already exists")
-
-    payload = {
-        "extras_code": extras_code,
-        "name": name,
-        "english_name": as_str_or_none(english_name),
-        "extra_unit": as_int("extra_unit", extra_unit_str) ,
-        "extra_group": as_int("extra_group", extra_group_str),
-        "vat": as_float("vat", vat_str),
-        "vat_code": as_str_or_none(vat_code),
-        "inventory": as_str_or_none(inventory),
-        "gl_code": as_str_or_none(gl_code),
-        "gl_code_sl": as_str_or_none(gl_code_sl),
-        "international_code": as_str_or_none(international_code),
-        "allow_in_cs": as_int("allow_in_cs", allow_in_cs_str),
-        "allow_in_web": as_int("allow_in_web", allow_in_web_str),
-        "allow_in_client": as_int("allow_in_client", allow_in_client_str),
-        "allow_in_portal": as_int("allow_in_portal", allow_in_portal_str),
-        "ext_extra_for": as_str_or_none(ext_extra_for),
-        "calculate_vat": as_str_or_none(calculate_vat),
-        "inventory_by_subextra": as_int("inventory_by_subextra", inventory_by_subextra_str),
-        "sub_extra_lastno": as_int("sub_extra_lastno", sub_extra_lastno_str),
-        "flat_amount_yn": as_str_or_none(flat_amount_yn),
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    payload = _strip_str_values(payload)
-
-    db.execute(insert(extras_table).values(**payload))
-    db.commit()
-
-    row = None
-    if extras_code:
-        row = db.execute(
-            select(extras_table).where(extras_table.c.extras_code == extras_code)
-        ).mappings().first()
-    return to_extra(dict(row)) if row else Extra(**payload)
-
-@app.put("/extras/{code}", response_model=Extra, tags=["Extras"])
-def update_extra(
-    code: str = Path(..., example=""),
-    name: Optional[str] = Form("", example="GPS"),
-    english_name: Optional[str] = Form("", example="GPS UNIT"),
-    extra_unit_str: Optional[str] = Form("", example="1"),
-    extra_group_str: Optional[str] = Form("", example="10"),
-    vat_str: Optional[str] = Form("", example="15"),
-    vat_code: Optional[str] = Form("", example="VAT15"),
-    inventory: Optional[str] = Form("", example="Y"),
-    gl_code: Optional[str] = Form("", example="5000-000"),
-    gl_code_sl: Optional[str] = Form("", example="5000-001"),
-    international_code: Optional[str] = Form("", example="INT12345"),
-    allow_in_cs_str: Optional[str] = Form("", example="1"),
-    allow_in_web_str: Optional[str] = Form("", example="1"),
-    allow_in_client_str: Optional[str] = Form("", example="1"),
-    allow_in_portal_str: Optional[str] = Form("", example="1"),
-    ext_extra_for: Optional[str] = Form("", example="E"),
-    calculate_vat: Optional[str] = Form("", example="Y"),
-    inventory_by_subextra_str: Optional[str] = Form("", example="0"),
-    sub_extra_lastno_str: Optional[str] = Form("", example="0"),
-    flat_amount_yn: Optional[str] = Form("", example="N"),
-    current_user: User = Security(get_current_user, scopes=["extras:write"]),
-    db: Session = Depends(get_db),
-):
-    code = code.strip()
-    vals = {
-        "name": as_str_or_none(name),
-        "english_name": as_str_or_none(english_name),
-        "extra_unit": as_int("extra_unit", extra_unit_str),
-        "extra_group": as_int("extra_group", extra_group_str),
-        "vat": as_float("vat", vat_str),
-        "vat_code": as_str_or_none(vat_code),
-        "inventory": as_str_or_none(inventory),
-        "gl_code": as_str_or_none(gl_code),
-        "gl_code_sl": as_str_or_none(gl_code_sl),
-        "international_code": as_str_or_none(international_code),
-        "allow_in_cs": as_int("allow_in_cs", allow_in_cs_str),
-        "allow_in_web": as_int("allow_in_web", allow_in_web_str),
-        "allow_in_client": as_int("allow_in_client", allow_in_client_str),
-        "allow_in_portal": as_int("allow_in_portal", allow_in_portal_str),
-        "ext_extra_for": as_str_or_none(ext_extra_for),
-        "calculate_vat": as_str_or_none(calculate_vat),
-        "inventory_by_subextra": as_int("inventory_by_subextra", inventory_by_subextra_str),
-        "sub_extra_lastno": as_int("sub_extra_lastno", sub_extra_lastno_str),
-        "flat_amount_yn": as_str_or_none(flat_amount_yn),
-    }
-    vals = {k: v for k, v in vals.items() if v is not None}
-    vals = _strip_str_values(vals)
-    if not vals:
-        raise HTTPException(status_code=422, detail="No fields to update")
-
-    res = db.execute(
-        update(extras_table)
-        .where(extras_table.c.extras_code == code)
-        .values(**vals)
-    )
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Extra not found")
-
-    db.commit()
-    row = db.execute(
-        select(extras_table).where(extras_table.c.extras_code == code)
-    ).mappings().first()
-    return to_extra(dict(row))
-
-@app.delete("/extras/{code}", tags=["Extras"])
-def delete_extra(
-    code: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["extras:write"]),
-    db: Session = Depends(get_db),
-):
-    code = code.strip()
-    res = db.execute(delete(extras_table).where(extras_table.c.extras_code == code))
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Extra not found")
-    db.commit()
-    return {"message": "Extra deleted"}
-
-@app.get("/extras/list", response_model=List[Extra], tags=["Extras"])
-def list_extras(
-    current_user: User = Security(get_current_user, scopes=["extras:read"]),
-    db: Session = Depends(get_db),
-    limit_str: Optional[str] = Query("", example=""),
-    offset_str: Optional[str] = Query("", example=""),
-    order_by: Optional[str] = Query("", description='e.g. "extras_code:asc"', example=""),
-):
-    limit = as_int("limit", limit_str) or 100
-    offset = as_int("offset", offset_str) or 0
-    query = select(extras_table)
-    query, _ = apply_ordering(query, extras_table, order_by, default_col="extras_code")
-    query = query.offset(offset).limit(limit)
-    rows = db.execute(query).mappings().all()
-    return [to_extra(dict(r)) for r in rows]
-
-@app.get("/extras/search", response_model=List[Extra], tags=["Extras"])
-def search_extras(
-    current_user: User = Security(get_current_user, scopes=["extras:read"]),
-    db: Session = Depends(get_db),
-    code: Optional[str] = Query("", alias="EXTRAS_CODE", example=""),
-    name: Optional[str] = Query("", alias="NAME", example=""),
-    group_str: Optional[str] = Query("", alias="EXTRA_GROUP", example=""),
-    inventory: Optional[str] = Query("", alias="INVENTORY", example=""),
-    partial_str: Optional[str] = Query("", description="Use partial matches (ILIKE)", example=""),
-    limit_str: Optional[str] = Query("", example=""),
-    offset_str: Optional[str] = Query("", example=""),
-    order_by: Optional[str] = Query("", description='e.g. "name:asc"', example=""),
-):
-    partial = as_bool("partial", partial_str, default=True)
-    limit = as_int("limit", limit_str) or 100
-    offset = as_int("offset", offset_str) or 0
-    group_val = as_int("EXTRA_GROUP", group_str)
-
-    query = select(extras_table)
-    if not _is_blank(code):
-        query = query.where(extras_table.c.extras_code.ilike(f"%{code}%") if partial else (extras_table.c.extras_code == code))
-    if not _is_blank(name):
-        query = query.where(extras_table.c.name.ilike(f"%{name}%") if partial else (extras_table.c.name == name))
-    if group_val is not None:
-        query = query.where(extras_table.c.extra_group == group_val)
-    if not _is_blank(inventory):
-        query = query.where(extras_table.c.inventory == inventory)
-
-    query, _ = apply_ordering(query, extras_table, order_by, default_col="extras_code")
-    query = query.offset(offset).limit(limit)
-    rows = db.execute(query).mappings().all()
-    return [to_extra(dict(r)) for r in rows]
-
-# ------------------------------------------------------------------------------------
-# CAR_CONTROL — Form-only for POST/PUT; blank query textboxes for GET
-# ------------------------------------------------------------------------------------
-@app.get("/car_control", response_model=List[CarControl], tags=["Car_Control (compat)"])
-def get_car_control(
-    current_user: User = Security(get_current_user, scopes=["cars:read"]),
-    db: Session = Depends(get_db),
-    unit_no: Optional[str] = Query("", alias="UNIT_NO", example=""),
-    license_no: Optional[str] = Query("", alias="LICENSE_NO", example=""),
-    limit_str: Optional[str] = Query("", example=""),
-    offset_str: Optional[str] = Query("", example=""),
-):
-    limit = as_int("limit", limit_str) or 100
-    offset = as_int("offset", offset_str) or 0
-    query = select(car_control_table)
-    if not _is_blank(unit_no):
-        query = query.where(car_control_table.c.unit_no == unit_no)
-    if not _is_blank(license_no):
-        query = query.where(car_control_table.c.license_no == license_no)
-    query = query.offset(offset).limit(limit)
-    rows = db.execute(query).mappings().all()
-    return [to_car_control(dict(r)) for r in rows]
-
-@app.get("/car_control/{unit_no}", response_model=CarControl, tags=["Car_Control"])
-def get_car_control_one(
-    unit_no: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["cars:read"]),
-    db: Session = Depends(get_db),
-):
-    unit_no = unit_no.strip()
-    row = db.execute(
-        select(car_control_table).where(car_control_table.c.unit_no == unit_no)
-    ).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Car control row not found")
-    return to_car_control(dict(row))
-
-@app.post("/car_control", response_model=CarControl, status_code=201, tags=["Car_Control"])
-def create_car_control(
-    unit_no: Optional[str] = Form("", example="100100000"),
-    license_no: Optional[str] = Form("", example="6929HJD"),
-    company_code_str: Optional[str] = Form("", example="1"),
-    fleet_assignment: Optional[str] = Form("", example="B"),
-    f_group: Optional[str] = Form("", example="FFAR"),
-    car_make_str: Optional[str] = Form("", example="10"),
-    model_str: Optional[str] = Form("", example="7"),
-    color: Optional[str] = Form("", example="RED"),
-    car_status_str: Optional[str] = Form("", example="7"),
-    owner_country: Optional[str] = Form("", example="KSA"),
-    check_out_date: Optional[str] = Form("", example="20251001"),
-    check_out_time_str: Optional[str] = Form("", example="48480"),
-    check_out_branach_str: Optional[str] = Form("", example="1"),
-    check_in_date: Optional[str] = Form("", example="20251001"),
-    check_in_time_str: Optional[str] = Form("", example="48540"),
-    check_in_branach_str: Optional[str] = Form("", example="1"),
-    branach_str: Optional[str] = Form("", example="1"),
-    country: Optional[str] = Form("", example="KSA"),
-    current_odometer_str: Optional[str] = Form("", example="100"),
-    out_of_service_reas_str: Optional[str] = Form("", example="0"),
-    vehicle_type: Optional[str] = Form("", example="VT"),
-    parking_lot_code_str: Optional[str] = Form("", example="1"),
-    parking_space_str: Optional[str] = Form("", example="1"),
-    sale_cycle_str: Optional[str] = Form("", example="0"),
-    last_document_type: Optional[str] = Form("", example="Y"),
-    last_document_no_str: Optional[str] = Form("", example="1"),
-    last_suv_agreement_str: Optional[str] = Form("", example="1"),
-    odometer_after_min_str: Optional[str] = Form("", example="0"),
-    reserved_to: Optional[str] = Form("", example="RSV000000012"),
-    garage_str: Optional[str] = Form("", example="0"),
-    smoke: Optional[str] = Form("", example="N"),
-    telephone: Optional[str] = Form("", example="0555555555"),
-    taxilimo_chauffeur: Optional[str] = Form("", example="NA"),
-    prechecked_in_place: Optional[str] = Form("", example="Yard A"),
-    fleet_sub_assignment_str: Optional[str] = Form("", example="0"),
-    deposit_note_str: Optional[str] = Form("", example="0"),
-    europcar_company: Optional[str] = Form("", example="N"),
-    petrol_level_str: Optional[str] = Form("", example="0"),
-    transaction_user: Optional[str] = Form("", example="BUGZY"),
-    transaction_date: Optional[str] = Form("", example="20251001"),
-    transaction_time_str: Optional[str] = Form("", example="0"),
-    mortgaged_to_str: Optional[str] = Form("", example="0"),
-    crc_inter_agr_str: Optional[str] = Form("", example="0"),
-    lease_document_str: Optional[str] = Form("", example="0"),
-    lease_srno_str: Optional[str] = Form("", example="0"),
-    lease_document_type: Optional[str] = Form("", example="L"),
-    lease_last_agreement_str: Optional[str] = Form("", example="0"),
-    lease_last_sub_agrno_str: Optional[str] = Form("", example="0"),
-    lease_veh_type_str: Optional[str] = Form("", example="SEDAN"),
-    crc_chauffeur: Optional[str] = Form("", example="NA"),
-    location_str: Optional[str] = Form("", example="0"),
-    sub_status_str: Optional[str] = Form("", example="0"),
-    promotional_veh: Optional[str] = Form("", example="N"),
-    mark_preready_stat: Optional[str] = Form("", example="N"),
-    yard_no_str: Optional[str] = Form("", example="0"),
-    awxx_last_update_date: Optional[str] = Form("", example="2025-10-02T07:00:00Z"),
-    current_user: User = Security(get_current_user, scopes=["cars:write"]),
-    db: Session = Depends(get_db),
-):
-    payload = {
-        "unit_no": as_str_or_none(unit_no),
-        "license_no": as_str_or_none(license_no),
-        "company_code": as_int("company_code", company_code_str),
-        "fleet_assignment": as_str_or_none(fleet_assignment),
-        "f_group": as_str_or_none(f_group),
-        "car_make": as_int("car_make", car_make_str),
-        "model": as_int("model", model_str),
-        "color": as_str_or_none(color),
-        "car_status": as_int("car_status", car_status_str),
-        "owner_country": as_str_or_none(owner_country),
-        "check_out_date": as_str_or_none(check_out_date),
-        "check_out_time": as_int("check_out_time", check_out_time_str),
-        "check_out_branach": as_int("check_out_branach", check_out_branach_str),
-        "check_in_date": as_str_or_none(check_in_date),
-        "check_in_time": as_int("check_in_time", check_in_time_str),
-        "check_in_branach": as_int("check_in_branach", check_in_branach_str),
-        "branach": as_int("branach", branach_str),
-        "country": as_str_or_none(country),
-        "current_odometer": as_int("current_odometer", current_odometer_str),
-        "out_of_service_reas": as_int("out_of_service_reas", out_of_service_reas_str),
-        "vehicle_type": as_str_or_none(vehicle_type),
-        "parking_lot_code": as_int("parking_lot_code", parking_lot_code_str),
-        "parking_space": as_int("parking_space", parking_space_str),
-        "sale_cycle": as_int("sale_cycle", sale_cycle_str),
-        "last_document_type": as_str_or_none(last_document_type),
-        "last_document_no": as_float("last_document_no", last_document_no_str),
-        "last_suv_agreement": as_int("last_suv_agreement", last_suv_agreement_str),
-        "odometer_after_min": as_int("odometer_after_min", odometer_after_min_str),
-        "reserved_to": as_str_or_none(reserved_to),
-        "garage": as_int("garage", garage_str),
-        "smoke": as_str_or_none(smoke),
-        "telephone": as_str_or_none(telephone),
-        "taxilimo_chauffeur": as_str_or_none(taxilimo_chauffeur),
-        "prechecked_in_place": as_str_or_none(prechecked_in_place),
-        "fleet_sub_assignment": as_int("fleet_sub_assignment", fleet_sub_assignment_str),
-        "deposit_note": as_float("deposit_note", deposit_note_str),
-        "europcar_company": as_str_or_none(europcar_company),
-        "petrol_level": as_int("petrol_level", petrol_level_str),
-        "transaction_user": as_str_or_none(transaction_user),
-        "transaction_date": as_str_or_none(transaction_date),
-        "transaction_time": as_int("transaction_time", transaction_time_str),
-        "mortgaged_to": as_int("mortgaged_to", mortgaged_to_str),
-        "crc_inter_agr": as_int("crc_inter_agr", crc_inter_agr_str),
-        "lease_document": as_int("lease_document", lease_document_str),
-        "lease_srno": as_int("lease_srno", lease_srno_str),
-        "lease_document_type": as_str_or_none(lease_document_type),
-        "lease_last_agreement": as_int("lease_last_agreement", lease_last_agreement_str),
-        "lease_last_sub_agrno": as_int("lease_last_sub_agrno", lease_last_sub_agrno_str),
-        "lease_veh_type": as_str_or_none(lease_veh_type_str),
-        "crc_chauffeur": as_str_or_none(crc_chauffeur),
-        "location": as_int("location", location_str),
-        "sub_status": as_int("sub_status", sub_status_str),
-        "promotional_veh": as_str_or_none(promotional_veh),
-        "mark_preready_stat": as_str_or_none(mark_preready_stat),
-        "yard_no": as_int("yard_no", yard_no_str),
-        "awxx_last_update_date": awxx_last_update_date,  # pass-through if provided
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    if not payload:
-        raise HTTPException(status_code=422, detail="Request body is empty")
-
-    if "unit_no" in payload and payload["unit_no"]:
-        exists = db.execute(
-            select(car_control_table.c.unit_no).where(car_control_table.c.unit_no == payload["unit_no"])
-        ).scalar()
-        if exists is not None:
-            raise HTTPException(status_code=409, detail=f"unit_no {payload['unit_no']} already exists")
-
-    db.execute(insert(car_control_table).values(**payload))
-    db.commit()
-
-    if "unit_no" in payload:
-        row = db.execute(
-            select(car_control_table).where(car_control_table.c.unit_no == payload["unit_no"])
-        ).mappings().first()
-        if row:
-            return to_car_control(dict(row))
-    return to_car_control(payload)
-@app.put("/car_control/{unit_no}", response_model=CarControl, tags=["Car_Control"])
-def update_car_control(
-    unit_no: str = Path(..., example=""),
-    license_no: Optional[str] = Form("", example="6929HJD"),
-    company_code_str: Optional[str] = Form("", example="1"),
-    fleet_assignment: Optional[str] = Form("", example="B"),
-    f_group: Optional[str] = Form("", example="FFAR"),
-    car_make_str: Optional[str] = Form("", example="10"),
-    model_str: Optional[str] = Form("", example="7"),
-    color: Optional[str] = Form("", example="RED"),
-    car_status_str: Optional[str] = Form("", example="7"),
-    owner_country: Optional[str] = Form("", example="KSA"),
-    check_out_date: Optional[str] = Form("", example="20251001"),
-    check_out_time_str: Optional[str] = Form("", example="48480"),
-    check_out_branach_str: Optional[str] = Form("", example="1"),
-    check_in_date: Optional[str] = Form("", example="20251001"),
-    check_in_time_str: Optional[str] = Form("", example="48540"),
-    check_in_branach_str: Optional[str] = Form("", example="1"),
-    branach_str: Optional[str] = Form("", example="1"),
-    country: Optional[str] = Form("", example="KSA"),
-    current_odometer_str: Optional[str] = Form("", example="100"),
-    out_of_service_reas_str: Optional[str] = Form("", example="0"),
-    vehicle_type: Optional[str] = Form("", example="VT"),
-    parking_lot_code_str: Optional[str] = Form("", example="1"),
-    parking_space_str: Optional[str] = Form("", example="1"),
-    sale_cycle_str: Optional[str] = Form("", example="0"),
-    last_document_type: Optional[str] = Form("", example="Y"),
-    last_document_no_str: Optional[str] = Form("", example="1"),
-    last_suv_agreement_str: Optional[str] = Form("", example="1"),
-    odometer_after_min_str: Optional[str] = Form("", example="0"),
-    reserved_to: Optional[str] = Form("", example="RSV000000012"),
-    garage_str: Optional[str] = Form("", example="0"),
-    smoke: Optional[str] = Form("", example="N"),
-    telephone: Optional[str] = Form("", example="0555555555"),
-    taxilimo_chauffeur: Optional[str] = Form("", example="NA"),
-    prechecked_in_place: Optional[str] = Form("", example="Yard A"),
-    fleet_sub_assignment_str: Optional[str] = Form("", example="0"),
-    deposit_note_str: Optional[str] = Form("", example="0"),
-    europcar_company: Optional[str] = Form("", example="N"),
-    petrol_level_str: Optional[str] = Form("", example="0"),
-    transaction_user: Optional[str] = Form("", example="BUGZY"),
-    transaction_date: Optional[str] = Form("", example="20251001"),
-    transaction_time_str: Optional[str] = Form("", example="0"),
-    mortgaged_to_str: Optional[str] = Form("", example="0"),
-    crc_inter_agr_str: Optional[str] = Form("", example="0"),
-    lease_document_str: Optional[str] = Form("", example="0"),
-    lease_srno_str: Optional[str] = Form("", example="0"),
-    lease_document_type: Optional[str] = Form("", example="L"),
-    lease_last_agreement_str: Optional[str] = Form("", example="0"),
-    lease_last_sub_agrno_str: Optional[str] = Form("", example="0"),
-    lease_veh_type_str: Optional[str] = Form("", example="SEDAN"),
-    crc_chauffeur: Optional[str] = Form("", example="NA"),
-    location_str: Optional[str] = Form("", example="0"),
-    sub_status_str: Optional[str] = Form("", example="0"),
-    promotional_veh: Optional[str] = Form("", example="N"),
-    mark_preready_stat: Optional[str] = Form("", example="N"),
-    yard_no_str: Optional[str] = Form("", example="0"),
-    awxx_last_update_date: Optional[str] = Form("", example="2025-10-02T07:00:00Z"),
-    current_user: User = Security(get_current_user, scopes=["cars:write"]),
-    db: Session = Depends(get_db),
-):
-    unit_no = unit_no.strip()
-    payload = {
-        "license_no": as_str_or_none(license_no),
-        "company_code": as_int("company_code", company_code_str),
-        "fleet_assignment": as_str_or_none(fleet_assignment),
-        "f_group": as_str_or_none(f_group),
-        "car_make": as_int("car_make", car_make_str),
-        "model": as_int("model", model_str),
-        "color": as_str_or_none(color),
-        "car_status": as_int("car_status", car_status_str),
-        "owner_country": as_str_or_none(owner_country),
-        "check_out_date": as_str_or_none(check_out_date),
-        "check_out_time": as_int("check_out_time", check_out_time_str),
-        "check_out_branach": as_int("check_out_branach", check_out_branach_str),
-        "check_in_date": as_str_or_none(check_in_date),
-        "check_in_time": as_int("check_in_time", check_in_time_str),
-        "check_in_branach": as_int("check_in_branach", check_in_branach_str),
-        "branach": as_int("branach", branach_str),
-        "country": as_str_or_none(country),
-        "current_odometer": as_int("current_odometer", current_odometer_str),
-        "out_of_service_reas": as_int("out_of_service_reas", out_of_service_reas_str),
-        "vehicle_type": as_str_or_none(vehicle_type),
-        "parking_lot_code": as_int("parking_lot_code", parking_lot_code_str),
-        "parking_space": as_int("parking_space", parking_space_str),
-        "sale_cycle": as_int("sale_cycle", sale_cycle_str),
-        "last_document_type": as_str_or_none(last_document_type),
-        "last_document_no": as_float("last_document_no", last_document_no_str),
-        "last_suv_agreement": as_int("last_suv_agreement", last_suv_agreement_str),
-        "odometer_after_min": as_int("odometer_after_min", odometer_after_min_str),
-        "reserved_to": as_str_or_none(reserved_to),
-        "garage": as_int("garage", garage_str),
-        "smoke": as_str_or_none(smoke),
-        "telephone": as_str_or_none(telephone),
-        "taxilimo_chauffeur": as_str_or_none(taxilimo_chauffeur),
-        "prechecked_in_place": as_str_or_none(prechecked_in_place),
-        "fleet_sub_assignment": as_int("fleet_sub_assignment", fleet_sub_assignment_str),
-        "deposit_note": as_float("deposit_note", deposit_note_str),
-        "europcar_company": as_str_or_none(europcar_company),
-        "petrol_level": as_int("petrol_level", petrol_level_str),
-        "transaction_user": as_str_or_none(transaction_user),
-        "transaction_date": as_str_or_none(transaction_date),
-        "transaction_time": as_int("transaction_time", transaction_time_str),
-        "mortgaged_to": as_int("mortgaged_to", mortgaged_to_str),
-        "crc_inter_agr": as_int("crc_inter_agr", crc_inter_agr_str),
-        "lease_document": as_int("lease_document", lease_document_str),
-        "lease_srno": as_int("lease_srno", lease_srno_str),
-        "lease_document_type": as_str_or_none(lease_document_type),
-        "lease_last_agreement": as_int("lease_last_agreement", lease_last_agreement_str),
-        "lease_last_sub_agrno": as_int("lease_last_sub_agrno", lease_last_sub_agrno_str),
-        "lease_veh_type": as_str_or_none(lease_veh_type_str),
-        "crc_chauffeur": as_str_or_none(crc_chauffeur),
-        "location": as_int("location", location_str),
-        "sub_status": as_int("sub_status", sub_status_str),
-        "promotional_veh": as_str_or_none(promotional_veh),
-        "mark_preready_stat": as_str_or_none(mark_preready_stat),
-        "yard_no": as_int("yard_no", yard_no_str),
-        "awxx_last_update_date": awxx_last_update_date,
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    if not payload:
-        raise HTTPException(status_code=422, detail="No fields to update")
-
-    res = db.execute(
-        update(car_control_table)
-        .where(car_control_table.c.unit_no == unit_no)
-        .values(**payload)
-    )
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Car control row not found")
-
-    db.commit()
-    row = db.execute(
-        select(car_control_table).where(car_control_table.c.unit_no == unit_no)
-    ).mappings().first()
-    return to_car_control(dict(row))
-
-@app.delete("/car_control/{unit_no}", tags=["Car_Control"])
-def delete_car_control(
-    unit_no: str = Path(..., example=""),
-    current_user: User = Security(get_current_user, scopes=["cars:write"]),
-    db: Session = Depends(get_db),
-):
-    unit_no = unit_no.strip()
-    res = db.execute(delete(car_control_table).where(car_control_table.c.unit_no == unit_no))
-    if res.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Car control row not found")
-    db.commit()
-    return {"message": "Car control row deleted"}
-
-@app.get("/car_control/list", response_model=List[CarControl], tags=["Car_Control"])
-def list_car_control(
-    current_user: User = Security(get_current_user, scopes=["cars:read"]),
-    db: Session = Depends(get_db),
-    limit_str: Optional[str] = Query("", example=""),
-    offset_str: Optional[str] = Query("", example=""),
-    order_by: Optional[str] = Query("", description='e.g. "unit_no:asc"', example=""),
-):
-    limit = as_int("limit", limit_str) or 100
-    offset = as_int("offset", offset_str) or 0
-    query = select(car_control_table)
-    query, _ = apply_ordering(query, car_control_table, order_by, default_col="unit_no")
-    query = query.offset(offset).limit(limit)
-    rows = db.execute(query).mappings().all()
-    return [to_car_control(dict(r)) for r in rows]
-
-@app.get("/car_control/search", response_model=List[CarControl], tags=["Car_Control"])
-def search_car_control(
-    current_user: User = Security(get_current_user, scopes=["cars:read"]),
-    db: Session = Depends(get_db),
-    unit_no: Optional[str] = Query("", alias="UNIT_NO", example=""),
-    license_no: Optional[str] = Query("", alias="LICENSE_NO", example=""),
-    car_status_str: Optional[str] = Query("", alias="CAR_STATUS", example=""),
-    vehicle_type: Optional[str] = Query("", alias="VEHICLE_TYPE", example=""),
-    color: Optional[str] = Query("", alias="COLOR", example=""),
-    country: Optional[str] = Query("", alias="COUNTRY", example=""),
-    partial_str: Optional[str] = Query("", description="Use partial matches (ILIKE) for text fields", example=""),
-    limit_str: Optional[str] = Query("", example=""),
-    offset_str: Optional[str] = Query("", example=""),
-    order_by: Optional[str] = Query("", description='e.g. "unit_no:asc"', example=""),
-):
-    partial = as_bool("partial", partial_str, default=True)
-    limit = as_int("limit", limit_str) or 100
-    offset = as_int("offset", offset_str) or 0
-    car_status = as_int("CAR_STATUS", car_status_str)
-
-    query = select(car_control_table)
-    if not _is_blank(unit_no):
-        query = query.where(car_control_table.c.unit_no.ilike(f"%{unit_no}%") if partial else (car_control_table.c.unit_no == unit_no))
-    if not _is_blank(license_no):
-        query = query.where(car_control_table.c.license_no.ilike(f"%{license_no}%") if partial else (car_control_table.c.license_no == license_no))
-    if car_status is not None:
-        query = query.where(car_control_table.c.car_status == car_status)
-    if not _is_blank(vehicle_type):
-        query = query.where(car_control_table.c.vehicle_type == vehicle_type)
-    if not _is_blank(color):
-        query = query.where(car_control_table.c.color.ilike(f"%{color}%") if partial else (car_control_table.c.color == color))
-    if not _is_blank(country):
-        query = query.where(car_control_table.c.country == country)
-
-    query, _ = apply_ordering(query, car_control_table, order_by, default_col="unit_no")
-    query = query.offset(offset).limit(limit)
-    rows = db.execute(query).mappings().all()
-    return [to_car_control(dict(r)) for r in rows]
-
-# ------------------------------------------------------------------------------------
-# Health Check (open)
-# ------------------------------------------------------------------------------------
-@app.get("/health")
-def health(db: Session = Depends(get_db)):
+@orders_router.get("/SearchOrder", response_model=List[OrderOut])
+def search_order(
+    SQRY: Optional[str] = Query(None, description="Search across all fields"),
+    session: Session = Depends(get_session)
+) -> List[OrderOut]:
     try:
-        db.execute(select(1))
-        return {"status": "ok"}
+        stmt = select(Order)
+
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(or_(
+
+                Order.Order_Number.ilike(search_term),
+                cast(Order.Customer_Number, String).ilike(search_term),
+                cast(Order.Quantity, String).ilike(search_term),
+                cast(Order.Price, String).ilike(search_term)  
+            ))
+
+        stmt = stmt.order_by(Order.Order_Number)
+        results = session.scalars(stmt).all()
+        return [order_out(o) for o in results]
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Search order failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search order failed: {str(e)}")
 
-# ------------------------------------------------------------------------------------
-# Startup
-# ------------------------------------------------------------------------------------
-@app.on_event("startup")
-def ensure_tables_and_seed_user():
-    metadata.create_all(engine)
-    with engine.connect() as conn:
-        has_scopes_col = conn.execute(text("""
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'scopes'
-        """)).first()
-        if not has_scopes_col:
-            conn.execute(text("ALTER TABLE users ADD COLUMN scopes TEXT"))
-            conn.commit()
-        has_ver_col = conn.execute(text("""
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'token_version'
-        """)).first()
-        if not has_ver_col:
-            conn.execute(text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1"))
-            conn.commit()
+@orders_router.post("/CreateOrders", response_model=OrderOut, status_code=201)
+def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> OrderOut:
+    o = Order(**payload.model_dump())
+    session.add(o)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Order number already exists")
+    session.refresh(o)
+    return order_out(o)
 
-    seed = os.getenv("SEED_DEFAULT_USER", "true").lower() == "true"
-    if not seed:
-        return
-    with SessionLocal() as db:
-        existing = db.execute(
-            select(users_table.c.username).where(users_table.c.username == "bugzy")
-        ).first()
-        if not existing:
-            seed_scopes = [
-                "items:read", "items:write",
-                "extras:read", "extras:write",
-                "cars:read", "cars:write",
-                "admin",
-            ]
-            db.execute(
-                insert(users_table).values(
-                    username="bugzy",
-                    hashed_password=get_password_hash("P@ssw0rd!"),
-                    is_active=True,
-                    scopes=join_scopes(seed_scopes),
-                    token_version=1,
-                )
-            )
-            db.commit()
+@orders_router.put("/UpdateOrders/{Order_Number}", response_model=OrderOut)
+def update_order(
+    Order_Number: int, payload: OrderIn, session: Session = Depends(get_session)
+) -> OrderOut:
+    o = session.get(Order, Order_Number)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    o.Customer_Number = payload.Customer_Number
+    o.Quantity = payload.Quantity
+    o.Price = payload.Price
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Order already exists")
+    session.refresh(o)
+    return order_out(o)
+
+@orders_router.delete("/DeleteOrders/{Order_Number}", status_code=204)
+def delete_order(Order_Number: int, session: Session = Depends(get_session)) -> Response:
+    o = session.get(Order, Order_Number)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    session.delete(o)
+    session.commit()
+    return Response(status_code=204)
+
+# Customers
+customers_router = APIRouter(tags=["Customers"])
+
+@customers_router.get("/GetCustomer/{Customer_Number}", response_model=CustomerOut)
+def get_customer(
+    Customer_Number: int, session: Session = Depends(get_session)
+) -> CustomerOut:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer_out(c)
+
+@customers_router.get("/ListCustomers", response_model=List[CustomerOut])
+def list_customers(
+    Customer_Number: Optional[int] = None, session: Session = Depends(get_session)
+) -> List[CustomerOut]:
+    stmt = select(Customer)
+    if Customer_Number is not None:
+        stmt = stmt.where(Customer.Customer_Number == Customer_Number)
+    stmt = stmt.order_by(Customer.Customer_Number)
+    return [customer_out(c) for c in session.scalars(stmt).all()]
+
+
+
+@customers_router.get("/SearchCustomer", response_model=List[CustomerOut])
+def search_customer(
+    SQRY: Optional[str] = Query(None, description="Search across all fields"),
+    session: Session = Depends(get_session)
+) -> List[CustomerOut]:
+    try:
+        stmt = select(Customer)
+
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(or_(
+
+                Customer.Customer_Number.ilike(search_term),
+                cast(Customer.Customer_Name, String).ilike(search_term)
+                
+            ))
+
+        stmt = stmt.order_by(Customer.Customer_Number)
+        results = session.scalars(stmt).all()
+        return [customer_out(c) for c in results]
+
+    except Exception as e:
+        logging.error(f"Search customer failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search customer failed: {str(e)}") 
+
+@customers_router.post("/CreateCustomers", response_model=CustomerOut, status_code=201)
+def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
+    c = Customer(**payload.model_dump())
+    session.add(c)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Company name already exists")
+    session.refresh(c)
+    return customer_out(c)
+
+@customers_router.put("/UpdateCustomers/{Customer_Number}", response_model=CustomerOut)
+def update_customer(
+    Customer_Number: int, payload: CustomerIn, session: Session = Depends(get_session)
+) -> CustomerOut:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    c.Customer_Name = payload.Customer_Name
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Customer already exists")
+    session.refresh(c)
+    return customer_out(c)
+
+@customers_router.delete("/DeleteCustomers/{Customer_Number}", status_code=204)
+def delete_customer(
+    Customer_Number: int, session: Session = Depends(get_session)
+) -> Response:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    session.delete(c)
+    session.commit()
+    return Response(status_code=204)
+
+# Invoices
+invoices_router = APIRouter(tags=["Invoices"])
+
+@invoices_router.get("/GetInvoice/{Invoice_Number}", response_model=InvoiceOut)
+def get_invoice(
+    Invoice_Number: int, session: Session = Depends(get_session)
+) -> InvoiceOut:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return invoice_out(i)
+
+@invoices_router.get("/ListInvoices", response_model=List[InvoiceOut])
+def list_invoices(
+    invoice_number: Optional[int] = None, session: Session = Depends(get_session)
+) -> List[InvoiceOut]:
+    stmt = select(Invoice)
+    if invoice_number is not None:
+        stmt = stmt.where(Invoice.Invoice_Number == invoice_number)
+    stmt = stmt.order_by(Invoice.Invoice_Number)
+    return [invoice_out(i) for i in session.scalars(stmt).all()]
+
+@invoices_router.get("/SearchInvoice", response_model=List[InvoiceOut])
+def search_invoice(
+    SQRY: Optional[str] = Query(None, description="Search across all fields"),
+    session: Session = Depends(get_session)
+) -> List[InvoiceOut]:
+    try:
+        stmt = select(Invoice)
+
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(or_(
+
+                Invoice.Invoice_Number.ilike(search_term),
+                cast(Invoice.Customer_Number, String).ilike(search_term),
+                cast(Invoice.Order_Number, String).ilike(search_term),
+                cast(Invoice.Invoice_Date, String).ilike(search_term),
+                cast(Invoice.Amount, String).ilike(search_term)  
+            ))
+
+        stmt = stmt.order_by(Invoice.Invoice_Number)
+        results = session.scalars(stmt).all()
+        return [invoice_out(i) for i in results]
+
+    except Exception as e:
+        logging.error(f"Search invoice failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search invoice failed: {str(e)}")
+
+@invoices_router.post("/CreateInvoices", response_model=InvoiceOut, status_code=201)
+def create_customer_v2(payload: InvoiceIn, session: Session = Depends(get_session)) -> InvoiceOut:
+    i = Invoice(**payload.model_dump())
+    session.add(i)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Invoice name already exists")
+    session.refresh(i)
+    return invoice_out(i)
+
+@invoices_router.put("/UpdateInvoices/{Invoice_Number}", response_model=InvoiceOut)
+def update_invoice(
+    Invoice_Number: int, payload: InvoiceIn, session: Session = Depends(get_session)
+) -> InvoiceOut:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    i.Order_Number = payload.Order_Number
+    i.Invoice_Date = payload.Invoice_Date
+    i.Amount = payload.Amount
+    i.Customer_Number = payload.Customer_Number
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Invoice already exists")
+    session.refresh(i)
+    return invoice_out(i)
+
+@invoices_router.delete("/DeleteInvoices/{Invoice_Number}", status_code=204)
+def delete_invoice(
+    Invoice_Number: int, session: Session = Depends(get_session)
+) -> Response:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    session.delete(i)
+    session.commit()
+    return Response(status_code=204)
+
+# Agreements (basic listing/getting kept for study; still protected)
+
+agreements_router = APIRouter(tags=["Agreements"])
+
+@agreements_router.get("/GetAgreement/{Agreement_number}", response_model=AgreementOut)
+def get_agreement(
+    Agreement_number: str, session: Session = Depends(get_session)
+) -> AgreementOut:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return agreement_out(a)
+
+@agreements_router.get("/ListAgreements", response_model=List[AgreementOut])
+def list_agreements(
+    Agreement_number: Optional[str] = None, session: Session = Depends(get_session)
+) -> List[AgreementOut]:
+    stmt = select(Agreement)
+    if Agreement_number is not None:
+        stmt = stmt.where(Agreement.Agreement_number == Agreement_number)
+    stmt = stmt.order_by(Agreement.Agreement_number)
+    return [agreement_out(a) for a in session.scalars(stmt).all()]
+
+@agreements_router.get("/SearchAgreements", response_model=List[AgreementOut])
+def search_agreements(
+    SQRY: Optional[str] = Query(None, description="Search across all fields"),
+    session: Session = Depends(get_session)
+) -> List[AgreementOut]:
+    try:
+        stmt = select(Agreement)
+
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(or_(
+                Agreement.Agreement_number.ilike(search_term),
+                cast(Agreement.Customer_Number, String).ilike(search_term),
+                cast(Agreement.Customer_site, String).ilike(search_term),
+                cast(Agreement.Your_reference_1, String).ilike(search_term),
+                cast(Agreement.Telephone_number_1, String).ilike(search_term),
+                cast(Agreement.Customers_order_number, String).ilike(search_term),
+                cast(Agreement.Agreement_order_type, String).ilike(search_term),
+                Agreement.Termination_date.ilike(search_term),
+                cast(Agreement.Line_charge_model, String).ilike(search_term),
+                Agreement.Address_line_1.ilike(search_term),
+                Agreement.Address_line_2.ilike(search_term),
+                Agreement.Address_line_3.ilike(search_term),
+                Agreement.Address_line_4.ilike(search_term),
+                Agreement.Salesperson.ilike(search_term),
+                cast(Agreement.Minimum_rental_type, String).ilike(search_term),
+                cast(Agreement.Minimum_order_value, String).ilike(search_term),
+                Agreement.Currency.ilike(search_term),
+                Agreement.Reason_code_created_agreement.ilike(search_term),
+                Agreement.User.ilike(search_term),
+                cast(Agreement.Minimum_hire_period, String).ilike(search_term),
+                Agreement.Payment_terms.ilike(search_term),
+                Agreement.Price_list.ilike(search_term),
+                Agreement.Reason_code_terminated_agreement.ilike(search_term),
+                Agreement.Project_number.ilike(search_term)
+            ))
+
+        stmt = stmt.order_by(Agreement.Agreement_number)
+        results = session.scalars(stmt).all()
+        return [agreement_out(a) for a in results]
+
+    except Exception as e:
+        logging.error(f"Search agreement failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search agreement failed: {str(e)}")
+
+@agreements_router.post("/CreateAgreements", response_model=AgreementOut, status_code=201)
+def create_agreement(payload: AgreementIn, session: Session = Depends(get_session)) -> AgreementOut:
+    a = Agreement(**payload.model_dump())
+    session.add(a)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Agreement already exists")
+    session.refresh(a)
+    return agreement_out(a)    
+
+@agreements_router.put("/UpdateAgreements/{Agreement_number}", response_model=AgreementOut)
+def update_agreement(
+    Agreement_number: str, payload: AgreementIn, session: Session = Depends(get_session)
+) -> AgreementOut:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    
+    a.Customer_Number = payload.Customer_Number
+    a.Customer_site = payload.Customer_site
+    a.Your_reference_1 = payload.Your_reference_1
+    a.Telephone_number_1 = payload.Telephone_number_1
+    a.Customers_order_number = payload.Customers_order_number
+    a.Agreement_order_type = payload.Agreement_order_type
+    a.Termination_date = payload.Termination_date
+    a.Line_charge_model = payload.Line_charge_model
+    a.Address_line_1 = payload.Address_line_1
+    a.Address_line_2 = payload.Address_line_2
+    a.Address_line_3 = payload.Address_line_3
+    a.Address_line_4 = payload.Address_line_4
+    a.Salesperson = payload.Salesperson
+    a.Minimum_rental_type = payload.Minimum_rental_type
+    a.Minimum_order_value = payload.Minimum_order_value
+    a.Currency = payload.Currency
+    a.Reason_code_created_agreement = payload.Reason_code_created_agreement
+    a.User = payload.User
+    a.Minimum_hire_period = payload.Minimum_hire_period
+    a.Payment_terms = payload.Payment_terms
+    a.Price_list = payload.Price_list
+    a.Reason_code_terminated_agreement = payload.Reason_code_terminated_agreement
+    a.Project_number = payload.Project_number
+    
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Agreement already exists")
+    session.refresh(a)
+    return agreement_out(a)
+
+@agreements_router.delete("/DeleteAgreement/{Agreement_number}", status_code=204)
+def delete_agreement(
+    Agreement_number: str, session: Session = Depends(get_session)
+) -> Response:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    session.delete(a)
+    session.commit()    
+
+# Users (basic listing/getting kept for study; still protected)
+users_router = APIRouter(tags=["Users"])
+
+@users_router.get("/GetUser/{user_id}", response_model=UserPublic)
+def get_user(user_id: int, session: Session = Depends(get_session)) -> UserPublic:
+    u = session.get(User, user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user_out(u)
+
+@users_router.get("/ListUsers", response_model=List[UserPublic])
+def list_users(
+    user_id: Optional[int] = None, session: Session = Depends(get_session)
+) -> List[UserPublic]:
+    stmt = select(User)
+    if user_id is not None:
+        stmt = stmt.where(User.user_id == user_id)
+    stmt = stmt.order_by(User.user_id)
+    return [user_out(u) for u in session.scalars(stmt).all()]
+
+@users_router.get("/SearchUser", response_model=List[UserPublic])
+def search_user(
+    SQRY: Optional[str] = Query(None, description="Search across all fields"),
+    session: Session = Depends(get_session)
+) -> List[UserPublic]:
+    try:
+        stmt = select(User)
+
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(or_(
+
+                User.user_id.ilike(search_term),
+                cast(User.user_name, String).ilike(search_term),
+                cast(User.location_address, String).ilike(search_term),
+                cast(User.email_address, String).ilike(search_term),
+                cast(User.contact_number, String).ilike(search_term),
+                cast(User.VAT_Number, String).ilike(search_term),
+                cast(User.hashed_pword, String).ilike(search_term),
+                cast(User.is_active, String).ilike(search_term)
+            ))
+
+        stmt = stmt.order_by(User.user_id)
+        results = session.scalars(stmt).all()
+        return [user_out(u) for u in results]
+
+    except Exception as e:
+        logging.error(f"Search user failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search user failed: {str(e)}")
+
+# (Kept for parity) Create/Update/Delete users via admin operations
+@users_router.post("/CreateUsers", response_model=UserPublic, status_code=201)
+def create_user(payload: UserCreate, session: Session = Depends(get_session)) -> UserPublic:
+    data = payload.model_dump()
+    email = data["email_address"].strip().lower()
+    if get_user_by_email(session, email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    hashed = get_password_hash(data.pop("Password"))
+    u = User(
+        user_name=data["user_name"],
+        location_address=data.get("location_address"),
+        email_address=email,
+        contact_number=data.get("contact_number"),
+        VAT_Number=data.get("VAT_Number"),
+        hashed_pword=hashed,
+    )
+    session.add(u)
+    session.commit()
+    session.refresh(u)
+    return user_out(u)
+
+@users_router.put("/UpdateUsers/{user_id}", response_model=UserPublic)
+def update_user(
+    user_id: int, payload: UserCreate, session: Session = Depends(get_session)
+) -> UserPublic:
+    u = session.get(User, user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_email = payload.email_address.strip().lower()
+    existing = session.scalar(select(User).where(User.email_address == new_email, User.user_id != user_id))
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already exists")
+    u.user_name = payload.user_name
+    u.location_address = payload.location_address
+    u.email_address = new_email
+    u.contact_number = payload.contact_number
+    u.VAT_Number = payload.VAT_Number
+    # To allow password change here as well, uncomment:
+    # u.hashed_pword = get_password_hash(payload.Password)
+    session.commit()
+    session.refresh(u)
+    return user_out(u)
+
+@users_router.delete("/DeleteUsers/{user_id}", status_code=204)
+def delete_user(user_id: int, session: Session = Depends(get_session)) -> Response:
+    u = session.get(User, user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    session.delete(u)
+    session.commit()
+    return Response(status_code=204)
+
+# ----------------------------- AUTH (Public) ---------------------------------
+auth_router = APIRouter(tags=["Auth"])
+
+@auth_router.post("/Register", response_model=UserPublic, status_code=201, summary="Register User")
+def register_user(payload: UserCreate, session: Session = Depends(get_session)) -> UserPublic:
+    """
+    Create a new user. Stores only the hashed password (bcrypt).
+    This endpoint is PUBLIC so first-time users can sign up.
+    """
+    email = payload.email_address.strip().lower()
+    if get_user_by_email(session, email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    hashed = get_password_hash(payload.Password)
+    u = User(
+        user_name=payload.user_name,
+        location_address=payload.location_address,
+        email_address=email,
+        contact_number=payload.contact_number,
+        VAT_Number=payload.VAT_Number,
+        hashed_pword=hashed,
+    )
+    session.add(u)
+    session.commit()
+    session.refresh(u)
+    return user_out(u)
+
+@auth_router.post("/token", response_model=Token, summary="Login for Access Token")
+def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),  # expects fields: username, password
+    session: Session = Depends(get_session)
+) -> Token:
+    """
+    OAuth2 Password Flow:
+      - Send form data: username=<email>, password=<your_password>
+      - On success, you receive a JWT to put into Authorization header as: Bearer <token>
+    """
+    email = form_data.username.strip().lower()
+    user = get_user_by_email(session, email)
+    if not user or not verify_password(form_data.password, user.hashed_pword):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    access_token = create_access_token(data={"sub": user.email_address})
+    return Token(access_token=access_token, token_type="bearer")
+
+@auth_router.get("/me", response_model=UserPublic, summary="Who am I? (Requires Bearer token)")
+def read_me(current_user: User = Depends(get_current_user)) -> UserPublic:
+    """Quick way to test your token."""
+    return user_out(current_user)
+
+# ============================ Mount Routers ==================================
+# IMPORTANT: this is how we LOCK everything by default.
+# We add a global dependency to each "business" router so that every endpoint
+# requires a valid Bearer token. The auth router stays PUBLIC.
+protected = [Depends(get_current_user)]
+
+# Protected routers (require Authorization: Bearer <token>)
+app.include_router(orders_router, dependencies=protected)
+app.include_router(customers_router, dependencies=protected)
+app.include_router(invoices_router, dependencies=protected)
+app.include_router(agreements_router, dependencies=protected) #newly added
+app.include_router(users_router, dependencies=protected)
+
+# Public auth endpoints (signup + login)
+app.include_router(auth_router)
+
