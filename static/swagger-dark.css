@@ -1,0 +1,227 @@
+@import url('https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css');
+
+/* Dark theme variables */
+:root {
+  color-scheme: dark;
+  --bg:#0d1117;
+  --text:#ffffff;
+  --muted:#d1d5db;
+  --panel:#0f172a;
+  --panel-2:#111827;
+  --border:#4b5563;
+  --code:#0b1220;
+  --link:#93c5fd;
+  --get:#3b82f6;
+  --post:#22c55e;
+  --put:#f59e0b;
+  --delete:#ef4444;
+  --patch:#a855f7;
+}
+
+/* Tables */
+.swagger-ui table thead tr,
+.swagger-ui table tbody tr {
+  background: var(--panel-2) !important;
+  color: var(--text) !important;
+}
+
+/* Inputs, buttons */
+.swagger-ui .btn,
+.swagger-ui select,
+.swagger-ui input,
+.swagger-ui textarea {
+  background:#0b1220 !important;
+  color:#fff !important;
+  border:1px solid var(--border) !important;
+  box-shadow:none !important;
+}
+.swagger-ui ::placeholder { color:#cbd5e1 !important; }
+
+/* Panels */
+.swagger-ui .opblock {
+  background:#1e293b !important;
+  border-color:var(--border) !important;
+  box-shadow:none !important;
+}
+.swagger-ui .opblock .opblock-summary {
+  background:#111827 !important;
+}
+
+/* Endpoint summary text */
+.swagger-ui .opblock-summary-path,
+.swagger-ui .opblock-summary-path__deprecated {
+  color:#fff !important;
+  opacity:1 !important;
+  font-weight:700 !important;
+  letter-spacing:.15px;
+}
+.swagger-ui .opblock-summary-description {
+  color:#f1f5f9 !important;
+  opacity:1 !important;
+}
+
+/* Responses */
+.swagger-ui .responses-wrapper,
+.swagger-ui .responses-inner,
+.swagger-ui .response {
+  color:#fff !important;
+  opacity:1 !important;
+}
+
+/* Tabs */
+.swagger-ui .tab li.active a,
+.swagger-ui .tab li a:hover {
+  color:#fff !important;
+  border-bottom:2px solid #93c5fd !important;
+}
+
+/* Code blocks */
+.swagger-ui .curl pre,
+.swagger-ui .request-url pre,
+.swagger-ui .response-col_description pre,
+.swagger-ui .microlight,
+.swagger-ui .highlight-code,
+.swagger-ui .hljs {
+  background:#0b1220 !important;
+  color:#fff !important;
+  border:1px solid var(--border) !important;
+}
+
+/* Servers section */
+.swagger-ui .servers,
+.swagger-ui .servers-wrapper,
+.swagger-ui .wrapper,
+.swagger-ui section.servers,
+.swagger-ui .scheme-container {
+  background:var(--bg) !important;
+  border:0 !important;
+  box-shadow:none !important;
+}
+.swagger-ui .servers select {
+  background:#0b1220 !important;
+  color:#fff !important;
+  border:1px solid var(--border) !important;
+  box-shadow:none !important;
+}
+
+/* Readability override */
+.swagger-ui, .swagger-ui * { text-shadow: none !important; }
+
+/* Labels and text */
+.swagger-ui [class*="__label"],
+.swagger-ui label,
+.swagger-ui .info .title,
+.swagger-ui .opblock-tag,
+.swagger-ui .markdown,
+.swagger-ui .renderedMarkdown,
+.swagger-ui .opblock-description-wrapper,
+.swagger-ui .opblock-summary-description,
+.swagger-ui .opblock-summary-path,
+.swagger-ui .parameter__name,
+.swagger-ui .parameter__in,
+.swagger-ui .parameter__type,
+.swagger-ui .model-title__text,
+.swagger-ui .model .property .prop-name,
+.swagger-ui .model .property .prop-type,
+.swagger-ui .prop-type,
+.swagger-ui .prop-format,
+.swagger-ui .response-col_status,
+.swagger-ui .response-col_description,
+.swagger-ui .response-col_links,
+.swagger-ui .headers-title,
+.swagger-ui .responses-wrapper .opblock-section-header h4,
+.swagger-ui .curl h4,
+.swagger-ui .request-url h4,
+.swagger-ui .servers h4,
+.swagger-ui .servers label,
+.swagger-ui .scheme-container .schemes-title,
+.swagger-ui .content-type,
+.swagger-ui .content-type .content-type__title,
+.swagger-ui .content-type .content-type__name,
+.swagger-ui .model-toggle,
+.swagger-ui .authorization__btn span,
+.swagger-ui .btn.authorize span {
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+
+/* Links */
+.swagger-ui a,
+.swagger-ui a:visited { color: var(--link) !important; opacity: 1 !important; }
+.swagger-ui a:hover { color: #bfdbfe !important; opacity: 1 !important; }
+
+/* Icons */
+.swagger-ui .expand-operation svg,
+.swagger-ui .model-toggle .arrow,
+.swagger-ui .expand-methods svg {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Disabled controls */
+.swagger-ui input:disabled,
+.swagger-ui select:disabled,
+.swagger-ui textarea:disabled {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+  background: #0b1220 !important;
+}
+
+/* Chevron icons */
+.swagger-ui .arrow,
+.swagger-ui .opblock-summary .opblock-summary-control svg,
+.swagger-ui .opblock-summary .opblock-summary-control .arrow,
+.swagger-ui .opblock .expand-operation svg,
+.swagger-ui .opblock .expand-operation .arrow,
+.swagger-ui .expand-methods svg,
+.swagger-ui .opblock-tag-section .expand-operation svg {
+  fill:#ffffff !important;
+  stroke:#ffffff !important;
+  opacity:1 !important;
+  filter:none !important;
+}
+
+/* Bright padlock icons */
+.swagger-ui .authorization__btn svg,
+.swagger-ui .opblock .authorization__btn svg {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+/* Models section chevrons */
+.swagger-ui .models-control .expand-operation svg,
+.swagger-ui .model-toggle,
+.swagger-ui .model-toggle .model-box-control,
+.swagger-ui .model-toggle .model-box-control .arrow,
+.swagger-ui .model-toggle .arrow {
+  color:#ffffff !important;
+  fill:#ffffff !important;
+  stroke:#ffffff !important;
+  opacity:1 !important;
+  filter:none !important;
+}
+
+/* Hover brightness */
+.swagger-ui .expand-operation:hover svg,
+.swagger-ui .opblock-summary-control:hover svg,
+.swagger-ui .models-control .expand-operation:hover svg,
+.swagger-ui .model-toggle:hover .arrow {
+  opacity:1 !important;
+  filter:brightness(1.05) !important;
+}
+
+/* Fix dimmed warning and error messages */
+.swagger-ui .messages-wrapper,
+.swagger-ui .errors-wrapper,
+.swagger-ui .response .response-message,
+.swagger-ui .response .response-message.warning,
+.swagger-ui .response .response-message.error {
+  color: #f87171 !important; /* Light red for errors */
+  background-color: #1f2937 !important; /* Dark background */
+  border: 1px solid #f87171 !important;
+  opacity: 1 !important;
+  font-weight: 600 !important;
+}
