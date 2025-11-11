@@ -36,8 +36,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
-import logging
-logging.basicConfig(level=logging.INFO)
+
+import sys
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 # ============================ Security Config ================================
 # For study/demo purposes only—use environment variables in production!
@@ -57,7 +58,10 @@ app = FastAPI(title="Bugzy API Development - FastAPI, SQLAlchemy, Pydantic, OAut
 # After app = FastAPI(...)
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,7 +71,7 @@ app.add_middleware(
 )
 
 # ============================ Database (SQLite) ==============================
-DATABASE_URL = "sqlite:///SQLAlchemyDB.db"
+DATABASE_URL = "sqlite:///./SQLAlchemyDB.db"
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 
 class Base(DeclarativeBase):
@@ -134,7 +138,10 @@ class Agreement(Base):
     Project_number: Mapped[str] = mapped_column(String(6), nullable=True)    
     
 # Create tables if missing (note: does not ALTER existing tables)
-Base.metadata.create_all(engine)
+try:
+    Base.metadata.create_all(engine)
+except Exception as e:
+    logging.error(f"DB init failed: {e}")
 
 # ============================ Session dependency =============================
 def get_session() -> Iterator[Session]:
@@ -906,5 +913,6 @@ app.include_router(users_router, dependencies=protected)
 
 # Public auth endpoints (signup + login)
 app.include_router(auth_router)
+
 
 
