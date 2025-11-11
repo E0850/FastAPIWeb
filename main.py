@@ -487,10 +487,8 @@ def search_customer(
         raise HTTPException(status_code=500, detail=f"Search customer failed: {str(e)}") 
 
 @customers_router.post("/CreateCustomers", response_model=CustomerOut, status_code=201)
-def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
-    
-c = Customer(**payload.dict())
-
+def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:    
+  c = Customer(**payload.dict())
   session.add(c)
     try:
         session.commit()
@@ -915,6 +913,7 @@ app.include_router(users_router, dependencies=protected)
 
 # Public auth endpoints (signup + login)
 app.include_router(auth_router)
+
 
 
 
