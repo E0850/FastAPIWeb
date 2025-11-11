@@ -36,6 +36,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
+import logging
+logging.basicConfig(level=logging.INFO)
 
 # ============================ Security Config ================================
 # For study/demo purposes only—use environment variables in production!
@@ -904,4 +906,5 @@ app.include_router(users_router, dependencies=protected)
 
 # Public auth endpoints (signup + login)
 app.include_router(auth_router)
+
 
