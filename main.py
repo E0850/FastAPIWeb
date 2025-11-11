@@ -489,12 +489,7 @@ def search_customer(
 @customers_router.post("/CreateCustomers", response_model=CustomerOut, status_code=201)
 def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
     
-  try:
-    data = payload.model_dump()
-except AttributeError:
-    data = payload.dict()
-
-c = Customer(**data)
+c = Customer(**payload.dict())
   
   session.add(c)
     try:
@@ -920,6 +915,7 @@ app.include_router(users_router, dependencies=protected)
 
 # Public auth endpoints (signup + login)
 app.include_router(auth_router)
+
 
 
 
