@@ -400,7 +400,7 @@ def search_order(
 
 @orders_router.post("/CreateOrders", response_model=OrderOut, status_code=201)
 def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> OrderOut:
-    o = Order(**payload.model_dump())
+    o = Order(**payload.dict())
     session.add(o)
     try:
         session.commit()
@@ -489,7 +489,7 @@ def search_customer(
 @customers_router.post("/CreateCustomers", response_model=CustomerOut, status_code=201)
 def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
     
-c = Customer(**payload.model_dump())
+c = Customer(**payload.dict())
 
   session.add(c)
     try:
@@ -578,7 +578,7 @@ def search_invoice(
 
 @invoices_router.post("/CreateInvoices", response_model=InvoiceOut, status_code=201)
 def create_customer_v2(payload: InvoiceIn, session: Session = Depends(get_session)) -> InvoiceOut:
-    i = Invoice(**payload.model_dump())
+    i = Invoice(**payload.dict())
     session.add(i)
     try:
         session.commit()
@@ -688,7 +688,7 @@ def search_agreements(
 
 @agreements_router.post("/CreateAgreements", response_model=AgreementOut, status_code=201)
 def create_agreement(payload: AgreementIn, session: Session = Depends(get_session)) -> AgreementOut:
-    a = Agreement(**payload.model_dump())
+    a = Agreement(**payload.dict())
     session.add(a)
     try:
         session.commit()
@@ -801,7 +801,7 @@ def search_user(
 # (Kept for parity) Create/Update/Delete users via admin operations
 @users_router.post("/CreateUsers", response_model=UserPublic, status_code=201)
 def create_user(payload: UserCreate, session: Session = Depends(get_session)) -> UserPublic:
-    data = payload.model_dump()
+    data = payload.dict()
     email = data["email_address"].strip().lower()
     if get_user_by_email(session, email):
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -915,6 +915,7 @@ app.include_router(users_router, dependencies=protected)
 
 # Public auth endpoints (signup + login)
 app.include_router(auth_router)
+
 
 
 
