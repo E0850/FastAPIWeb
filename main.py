@@ -89,13 +89,6 @@ engine = create_engine(
     pool_pre_ping=True,   # helps recover stale connections
 )
 
-# models_db.py
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, Integer, String, MetaData
-
-metadata = MetaData(schema="dbo")
-Base = declarative_base(metadata=metadata)
-
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
@@ -942,6 +935,7 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
