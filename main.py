@@ -89,7 +89,6 @@ engine = create_engine(
     pool_pre_ping=True,   # helps recover stale connections
 )
 
-
 # models_db.py
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column, Integer, String, MetaData
@@ -111,13 +110,13 @@ class Order(Base):
 
 class Customer(Base):
     __tablename__ = "customers"
- #   __table_args__ = {"schema": "dbo"} 
+    __table_args__ = {"schema": "dbo"} 
     Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Customer_Name: Mapped[str] = mapped_column(String(100), nullable=False)
 
 class User(Base):
     __tablename__ = "users"
-  #  __table_args__ = {"schema": "dbo"} 
+    __table_args__ = {"schema": "dbo"} 
     User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     User_Name: Mapped[str] = mapped_column(String(100), nullable=False)
     Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -129,7 +128,7 @@ class User(Base):
    
 class Invoice(Base):
     __tablename__ = "invoices"
-  #  __table_args__ = {"schema": "dbo"} 
+    __table_args__ = {"schema": "dbo"} 
     Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Order_Number: Mapped[int] = mapped_column(Integer)
     Customer_Number: Mapped[int] = mapped_column(Integer)
@@ -139,7 +138,7 @@ class Invoice(Base):
 
 class Agreement(Base):
     __tablename__ = "agreements"
-  #  __table_args__ = {"schema": "dbo"} 
+    __table_args__ = {"schema": "dbo"} 
     Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True)   
     Customer_Number: Mapped[int] = mapped_column(Integer)    
     Customer_site: Mapped[int] = mapped_column(Integer)    
@@ -943,6 +942,7 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
