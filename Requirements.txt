@@ -1,6 +1,7 @@
+here is my requiremets.txt content:
+
 # FastAPI + Pydantic v1 series
 fastapi>=0.95,<0.100
-pydantic[email]==1.10.24
 
 # ASGI server
 uvicorn[standard]==0.23.2
@@ -17,3 +18,9 @@ cryptography>=41,<44
 
 # Forms & env
 python-multipart==0.0.9
+
+# DB driver
+psycopg2==2.9.11
+
+# Or this (pydantic with the "email" extra, which pulls email-validator)
+pydantic[email]==1.10.24
