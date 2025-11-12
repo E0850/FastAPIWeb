@@ -1,5 +1,3 @@
-here is my requiremets.txt content:
-
 # FastAPI + Pydantic v1 series
 fastapi>=0.95,<0.100
 
