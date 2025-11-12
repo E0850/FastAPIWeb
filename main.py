@@ -14,8 +14,14 @@ What this version adds:
 Run locally:
   uvicorn SimpleAPI_SQLAlchemy_version:app --reload --port 8001
 """
-
 from __future__ import annotations
+
+import os
+
+from dotenv import load_dotenv  # pip install python-dotenv
+from sqlalchemy.orm import Session
+
+
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, List, Optional
 
@@ -37,14 +43,11 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
 
-import sys
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
 # ============================ Security Config ================================
 # For study/demo purposes only—use environment variables in production!
-SECRET_KEY = "Bugzy"        # CHANGE this in production
-ALGORITHM = "HS256"         # JWT signing algorithm
-TOKEN_EXPIRES_MIN = 60      # <-- Token expires in 30 minutes changed to 60
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+TOKEN_EXPIRES_MIN = int(os.getenv("TOKEN_EXPIRES_MIN", "60"))
 
 # Password hashing context (bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -53,56 +56,72 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 # ============================ App & CORS (dev-open) ==========================
-app = FastAPI(title="Bugzy API Development - FastAPI, SQLAlchemy, Pydantic, OAuth2, Passlib Enabled - Swagger UI")
+app = FastAPI(title="Bugzy API Development - FastAPI, SQLAlchemy, PostgresSQL DB, Pydantic, OAuth2, Passlib Enabled - Swagger UI")
 
 # After app = FastAPI(...)
+
+# Load environment variables from .env (dev convenience)
+load_dotenv()
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
+raw_origins = os.getenv("CORS_ORIGINS", "")
+allow_origins: List[str] = [o.strip() for o in raw_origins.split(",") if o.strip()] or ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # keep open while learning; restrict in production
+    allow_origins=allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ============================ Database (PostgreSQL) ==========================
+DATABASE_URL = os.getenv("DB_URL", "").strip()
+if not DATABASE_URL:
+    raise RuntimeError("DB_URL is not set. Put it in .env or environment variables.")
 
-# ============================ Database (SQLite) ==============================
-DATABASE_URL = "sqlite:///./SQLAlchemyDB.db"
-engine = create_engine(DATABASE_URL, echo=False, future=True)
+# For psycopg2 + PostgreSQL. Neon requires SSL; it's already in the URL.
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,   # helps recover stale connections
+)
 
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
 # ---------------------------- ORM MODELS SQLALCHEMY-------------------------------------
 class Order(Base):
-    __tablename__ = "Orders"
+    __tablename__ = "orders"
+    __table_args__ = {"schema": "dbo"} 
     Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Customer_Number: Mapped[int] = mapped_column(Integer)
     Quantity: Mapped[int] = mapped_column(Integer)
     Price: Mapped[int] = mapped_column(Integer)
 
 class Customer(Base):
-    __tablename__ = "Customers"
+    __tablename__ = "customers"
+    __table_args__ = {"schema": "dbo"} 
     Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Customer_Name: Mapped[str] = mapped_column(String(100), nullable=False)
 
 class User(Base):
     __tablename__ = "users"
-    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    location_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    email_address: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    contact_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    VAT_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    hashed_pword: Mapped[str] = mapped_column(nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
+    __table_args__ = {"schema": "dbo"} 
+    User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    User_Name: Mapped[str] = mapped_column(String(100), nullable=False)
+    Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    Email_Address: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    Contact_Number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    Vat_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    Hashed_Pword: Mapped[str] = mapped_column(nullable=False)
+    Is_Active: Mapped[bool] = mapped_column(Boolean, default=True)
+   
 class Invoice(Base):
-    __tablename__ = "Invoices"
+    __tablename__ = "invoices"
+    __table_args__ = {"schema": "dbo"} 
     Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Order_Number: Mapped[int] = mapped_column(Integer)
     Customer_Number: Mapped[int] = mapped_column(Integer)
@@ -111,13 +130,14 @@ class Invoice(Base):
     
 
 class Agreement(Base):
-    __tablename__ = "Agreements"
+    __tablename__ = "agreements"
+    __table_args__ = {"schema": "dbo"} 
     Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True)   
     Customer_Number: Mapped[int] = mapped_column(Integer)    
     Customer_site: Mapped[int] = mapped_column(Integer)    
     Your_reference_1: Mapped[int] = mapped_column(Integer)    
     Telephone_number_1: Mapped[int] = mapped_column(Integer)    
-    Customers_order_number: Mapped[int] = mapped_column(Integer)    
+    customers_order_number: Mapped[int] = mapped_column(Integer)    
     Agreement_order_type: Mapped[int] = mapped_column(Integer)    
     Termination_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)    
     Line_charge_model: Mapped[int] = mapped_column(Integer)    
@@ -138,10 +158,7 @@ class Agreement(Base):
     Project_number: Mapped[str] = mapped_column(String(6), nullable=True)    
     
 # Create tables if missing (note: does not ALTER existing tables)
-try:
-    Base.metadata.create_all(engine)
-except Exception as e:
-    logging.error(f"DB init failed: {e}")
+Base.metadata.create_all(engine)
 
 # ============================ Session dependency =============================
 def get_session() -> Iterator[Session]:
@@ -149,7 +166,7 @@ def get_session() -> Iterator[Session]:
         yield session
 
 # ============================ Schemas (Pydantic) =============================
-# Orders
+# orders
 class OrderIn(BaseModel):
     Customer_Number: int
     Quantity: int
@@ -165,7 +182,7 @@ def order_out(o: Order) -> OrderOut:
         Price=o.Price,
     )
 
-# Customers
+# customers
 class CustomerIn(BaseModel):
     Customer_Name: str
 class CustomerOut(CustomerIn):
@@ -176,33 +193,33 @@ def customer_out(c: Customer) -> CustomerOut:
 
 # Users (separate Create vs Public to avoid exposing passwords)
 class UserCreate(BaseModel):
-    user_name: str
-    location_address: Optional[str] = None
-    email_address: EmailStr
-    contact_number: Optional[str] = None
-    VAT_Number: Optional[str] = None
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
     Password: str = Field(..., min_length=6, description="Strong password")
 
 class UserPublic(BaseModel):
-    user_id: int
-    user_name: str
-    location_address: Optional[str] = None
-    email_address: EmailStr
-    contact_number: Optional[str] = None
-    VAT_Number: Optional[str] = None
-    is_active: bool = True
+    User_Id: int
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Is_Active: bool = True
 def user_out(u: User) -> UserPublic:
     return UserPublic(
-        user_id=u.user_id,
-        user_name=u.user_name,
-        location_address=u.location_address or "",
-        email_address=u.email_address,
-        contact_number=u.contact_number or "",
-        VAT_Number=u.VAT_Number or "",
-        is_active=bool(u.is_active),
+        User_Id=u.User_Id,
+        User_Name=u.User_Name,
+        Location_Address=u.Location_Address or "",
+        Email_Address=u.Email_Address,
+        Contact_Number=u.Contact_Number or "",
+        Vat_Number=u.Vat_Number or "",
+        Is_Active=bool(u.Is_Active),
     )
 
-# Invoices
+# invoices
 class InvoiceIn(BaseModel):
     Order_Number: int
     Invoice_Date: str
@@ -220,14 +237,14 @@ def invoice_out(i: Invoice) -> InvoiceOut:
         Customer_Number=i.Customer_Number,
     )
 
-# Agreements
+# agreements
 class AgreementIn(BaseModel):    
     Agreement_number: str
     Customer_Number: int
     Customer_site: int
     Your_reference_1: int
     Telephone_number_1: int
-    Customers_order_number: int
+    customers_order_number: int
     Agreement_order_type: int
     Termination_date: str
     Line_charge_model: int
@@ -260,7 +277,7 @@ def agreement_out(a: Agreement) -> AgreementOut:
         Customer_site=a.Customer_site,
         Your_reference_1=a.Your_reference_1,
         Telephone_number_1=a.Telephone_number_1,
-        Customers_order_number=a.Customers_order_number,
+        customers_order_number=a.customers_order_number,
         Agreement_order_type=a.Agreement_order_type,
         Termination_date=a.Termination_date,
         Line_charge_model=a.Line_charge_model,
@@ -319,7 +336,7 @@ def create_access_token(data: dict, expires_minutes: int = TOKEN_EXPIRES_MIN) ->
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_user_by_email(session: Session, email: str) -> Optional[User]:
-    return session.scalar(select(User).where(User.email_address == email))
+    return session.scalar(select(User).where(User.Email_Address == email))
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -346,12 +363,12 @@ def get_current_user(
     user = get_user_by_email(session, token_data.email) if token_data.email else None
     if user is None:
         raise credentials_error
-    if not user.is_active:
+    if not user.Is_Active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
 
 # ================================ ROUTERS ====================================
-# Orders
+# orders
 orders_router = APIRouter(tags=["Orders"])
 
 @orders_router.get("/GetOrder/{Order_Number}", response_model=OrderOut)
@@ -361,7 +378,7 @@ def get_order(Order_Number: int, session: Session = Depends(get_session)) -> Ord
         raise HTTPException(status_code=404, detail="Order not found")
     return order_out(o)
 
-@orders_router.get("/ListOrders", response_model=List[OrderOut])
+@orders_router.get("/Listorders", response_model=List[OrderOut])
 def list_orders(
     Order_Number: Optional[int] = None,
     session: Session = Depends(get_session),
@@ -384,7 +401,7 @@ def search_order(
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
 
-                Order.Order_Number.ilike(search_term),
+                cast(Order.Order_Number, String).ilike(search_term),
                 cast(Order.Customer_Number, String).ilike(search_term),
                 cast(Order.Quantity, String).ilike(search_term),
                 cast(Order.Price, String).ilike(search_term)  
@@ -398,9 +415,9 @@ def search_order(
         logging.error(f"Search order failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search order failed: {str(e)}")
 
-@orders_router.post("/CreateOrders", response_model=OrderOut, status_code=201)
+@orders_router.post("/Createorders", response_model=OrderOut, status_code=201)
 def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> OrderOut:
-    o = Order(**payload.dict())
+    o = Order(**payload.model_dump())
     session.add(o)
     try:
         session.commit()
@@ -410,7 +427,7 @@ def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> O
     session.refresh(o)
     return order_out(o)
 
-@orders_router.put("/UpdateOrders/{Order_Number}", response_model=OrderOut)
+@orders_router.put("/Updateorders/{Order_Number}", response_model=OrderOut)
 def update_order(
     Order_Number: int, payload: OrderIn, session: Session = Depends(get_session)
 ) -> OrderOut:
@@ -428,7 +445,7 @@ def update_order(
     session.refresh(o)
     return order_out(o)
 
-@orders_router.delete("/DeleteOrders/{Order_Number}", status_code=204)
+@orders_router.delete("/Deleteorders/{Order_Number}", status_code=204)
 def delete_order(Order_Number: int, session: Session = Depends(get_session)) -> Response:
     o = session.get(Order, Order_Number)
     if not o:
@@ -437,7 +454,7 @@ def delete_order(Order_Number: int, session: Session = Depends(get_session)) -> 
     session.commit()
     return Response(status_code=204)
 
-# Customers
+# customers
 customers_router = APIRouter(tags=["Customers"])
 
 @customers_router.get("/GetCustomer/{Customer_Number}", response_model=CustomerOut)
@@ -449,7 +466,7 @@ def get_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
     return customer_out(c)
 
-@customers_router.get("/ListCustomers", response_model=List[CustomerOut])
+@customers_router.get("/Listcustomers", response_model=List[CustomerOut])
 def list_customers(
     Customer_Number: Optional[int] = None, session: Session = Depends(get_session)
 ) -> List[CustomerOut]:
@@ -473,7 +490,7 @@ def search_customer(
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
 
-                Customer.Customer_Number.ilike(search_term),
+                cast(Customer.Customer_Number, String).ilike(search_term),
                 cast(Customer.Customer_Name, String).ilike(search_term)
                 
             ))
@@ -486,10 +503,10 @@ def search_customer(
         logging.error(f"Search customer failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search customer failed: {str(e)}") 
 
-@customers_router.post("/CreateCustomers", response_model=CustomerOut, status_code=201)
-def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:    
-  c = Customer(**payload.dict())
-  session.add(c)
+@customers_router.post("/Createcustomers", response_model=CustomerOut, status_code=201)
+def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
+    c = Customer(**payload.model_dump())
+    session.add(c)
     try:
         session.commit()
     except IntegrityError:
@@ -498,7 +515,7 @@ def create_customer(payload: CustomerIn, session: Session = Depends(get_session)
     session.refresh(c)
     return customer_out(c)
 
-@customers_router.put("/UpdateCustomers/{Customer_Number}", response_model=CustomerOut)
+@customers_router.put("/Updatecustomers/{Customer_Number}", response_model=CustomerOut)
 def update_customer(
     Customer_Number: int, payload: CustomerIn, session: Session = Depends(get_session)
 ) -> CustomerOut:
@@ -514,7 +531,7 @@ def update_customer(
     session.refresh(c)
     return customer_out(c)
 
-@customers_router.delete("/DeleteCustomers/{Customer_Number}", status_code=204)
+@customers_router.delete("/Deletecustomers/{Customer_Number}", status_code=204)
 def delete_customer(
     Customer_Number: int, session: Session = Depends(get_session)
 ) -> Response:
@@ -525,7 +542,7 @@ def delete_customer(
     session.commit()
     return Response(status_code=204)
 
-# Invoices
+# invoices
 invoices_router = APIRouter(tags=["Invoices"])
 
 @invoices_router.get("/GetInvoice/{Invoice_Number}", response_model=InvoiceOut)
@@ -537,7 +554,7 @@ def get_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     return invoice_out(i)
 
-@invoices_router.get("/ListInvoices", response_model=List[InvoiceOut])
+@invoices_router.get("/Listinvoices", response_model=List[InvoiceOut])
 def list_invoices(
     invoice_number: Optional[int] = None, session: Session = Depends(get_session)
 ) -> List[InvoiceOut]:
@@ -574,9 +591,9 @@ def search_invoice(
         logging.error(f"Search invoice failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search invoice failed: {str(e)}")
 
-@invoices_router.post("/CreateInvoices", response_model=InvoiceOut, status_code=201)
-def create_customer_v2(payload: InvoiceIn, session: Session = Depends(get_session)) -> InvoiceOut:
-    i = Invoice(**payload.dict())
+@invoices_router.post("/Createinvoices", response_model=InvoiceOut, status_code=201)
+def create_invoice(payload: InvoiceIn, session: Session = Depends(get_session)) -> InvoiceOut:
+    i = Invoice(**payload.model_dump())
     session.add(i)
     try:
         session.commit()
@@ -586,7 +603,7 @@ def create_customer_v2(payload: InvoiceIn, session: Session = Depends(get_sessio
     session.refresh(i)
     return invoice_out(i)
 
-@invoices_router.put("/UpdateInvoices/{Invoice_Number}", response_model=InvoiceOut)
+@invoices_router.put("/Updateinvoices/{Invoice_Number}", response_model=InvoiceOut)
 def update_invoice(
     Invoice_Number: int, payload: InvoiceIn, session: Session = Depends(get_session)
 ) -> InvoiceOut:
@@ -605,7 +622,7 @@ def update_invoice(
     session.refresh(i)
     return invoice_out(i)
 
-@invoices_router.delete("/DeleteInvoices/{Invoice_Number}", status_code=204)
+@invoices_router.delete("/Deleteinvoices/{Invoice_Number}", status_code=204)
 def delete_invoice(
     Invoice_Number: int, session: Session = Depends(get_session)
 ) -> Response:
@@ -616,7 +633,7 @@ def delete_invoice(
     session.commit()
     return Response(status_code=204)
 
-# Agreements (basic listing/getting kept for study; still protected)
+# agreements (basic listing/getting kept for study; still protected)
 
 agreements_router = APIRouter(tags=["Agreements"])
 
@@ -626,10 +643,10 @@ def get_agreement(
 ) -> AgreementOut:
     a = session.get(Agreement, Agreement_number)
     if not a:
-        raise HTTPException(status_code=404, detail="Invoice not found")
+        raise HTTPException(status_code=404, detail="Agreement not found")
     return agreement_out(a)
 
-@agreements_router.get("/ListAgreements", response_model=List[AgreementOut])
+@agreements_router.get("/Listagreements", response_model=List[AgreementOut])
 def list_agreements(
     Agreement_number: Optional[str] = None, session: Session = Depends(get_session)
 ) -> List[AgreementOut]:
@@ -639,7 +656,7 @@ def list_agreements(
     stmt = stmt.order_by(Agreement.Agreement_number)
     return [agreement_out(a) for a in session.scalars(stmt).all()]
 
-@agreements_router.get("/SearchAgreements", response_model=List[AgreementOut])
+@agreements_router.get("/Searchagreements", response_model=List[AgreementOut])
 def search_agreements(
     SQRY: Optional[str] = Query(None, description="Search across all fields"),
     session: Session = Depends(get_session)
@@ -655,7 +672,7 @@ def search_agreements(
                 cast(Agreement.Customer_site, String).ilike(search_term),
                 cast(Agreement.Your_reference_1, String).ilike(search_term),
                 cast(Agreement.Telephone_number_1, String).ilike(search_term),
-                cast(Agreement.Customers_order_number, String).ilike(search_term),
+                cast(Agreement.customers_order_number, String).ilike(search_term),
                 cast(Agreement.Agreement_order_type, String).ilike(search_term),
                 Agreement.Termination_date.ilike(search_term),
                 cast(Agreement.Line_charge_model, String).ilike(search_term),
@@ -684,9 +701,9 @@ def search_agreements(
         logging.error(f"Search agreement failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search agreement failed: {str(e)}")
 
-@agreements_router.post("/CreateAgreements", response_model=AgreementOut, status_code=201)
+@agreements_router.post("/Createagreements", response_model=AgreementOut, status_code=201)
 def create_agreement(payload: AgreementIn, session: Session = Depends(get_session)) -> AgreementOut:
-    a = Agreement(**payload.dict())
+    a = Agreement(**payload.model_dump())
     session.add(a)
     try:
         session.commit()
@@ -696,7 +713,7 @@ def create_agreement(payload: AgreementIn, session: Session = Depends(get_sessio
     session.refresh(a)
     return agreement_out(a)    
 
-@agreements_router.put("/UpdateAgreements/{Agreement_number}", response_model=AgreementOut)
+@agreements_router.put("/Updateagreements/{Agreement_number}", response_model=AgreementOut)
 def update_agreement(
     Agreement_number: str, payload: AgreementIn, session: Session = Depends(get_session)
 ) -> AgreementOut:
@@ -708,7 +725,7 @@ def update_agreement(
     a.Customer_site = payload.Customer_site
     a.Your_reference_1 = payload.Your_reference_1
     a.Telephone_number_1 = payload.Telephone_number_1
-    a.Customers_order_number = payload.Customers_order_number
+    a.customers_order_number = payload.customers_order_number
     a.Agreement_order_type = payload.Agreement_order_type
     a.Termination_date = payload.Termination_date
     a.Line_charge_model = payload.Line_charge_model
@@ -749,21 +766,21 @@ def delete_agreement(
 # Users (basic listing/getting kept for study; still protected)
 users_router = APIRouter(tags=["Users"])
 
-@users_router.get("/GetUser/{user_id}", response_model=UserPublic)
-def get_user(user_id: int, session: Session = Depends(get_session)) -> UserPublic:
-    u = session.get(User, user_id)
+@users_router.get("/GetUser/{User_Id}", response_model=UserPublic)
+def get_user(User_Id: int, session: Session = Depends(get_session)) -> UserPublic:
+    u = session.get(User, User_Id)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return user_out(u)
 
 @users_router.get("/ListUsers", response_model=List[UserPublic])
 def list_users(
-    user_id: Optional[int] = None, session: Session = Depends(get_session)
+    User_Id: Optional[int] = None, session: Session = Depends(get_session)
 ) -> List[UserPublic]:
     stmt = select(User)
-    if user_id is not None:
-        stmt = stmt.where(User.user_id == user_id)
-    stmt = stmt.order_by(User.user_id)
+    if User_Id is not None:
+        stmt = stmt.where(User.User_Id == User_Id)
+    stmt = stmt.order_by(User.User_Id)
     return [user_out(u) for u in session.scalars(stmt).all()]
 
 @users_router.get("/SearchUser", response_model=List[UserPublic])
@@ -778,17 +795,17 @@ def search_user(
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
 
-                User.user_id.ilike(search_term),
-                cast(User.user_name, String).ilike(search_term),
-                cast(User.location_address, String).ilike(search_term),
-                cast(User.email_address, String).ilike(search_term),
-                cast(User.contact_number, String).ilike(search_term),
-                cast(User.VAT_Number, String).ilike(search_term),
-                cast(User.hashed_pword, String).ilike(search_term),
-                cast(User.is_active, String).ilike(search_term)
+                cast(User.User_Id, String).ilike(search_term),
+                cast(User.User_Name, String).ilike(search_term),
+                cast(User.Location_Address, String).ilike(search_term),
+                cast(User.Email_Address, String).ilike(search_term),
+                cast(User.Contact_Number, String).ilike(search_term),
+                cast(User.Vat_Number, String).ilike(search_term),
+                cast(User.Hashed_Pword, String).ilike(search_term),
+                cast(User.Is_Active, String).ilike(search_term)
             ))
 
-        stmt = stmt.order_by(User.user_id)
+        stmt = stmt.order_by(User.User_Id)
         results = session.scalars(stmt).all()
         return [user_out(u) for u in results]
 
@@ -799,49 +816,49 @@ def search_user(
 # (Kept for parity) Create/Update/Delete users via admin operations
 @users_router.post("/CreateUsers", response_model=UserPublic, status_code=201)
 def create_user(payload: UserCreate, session: Session = Depends(get_session)) -> UserPublic:
-    data = payload.dict()
-    email = data["email_address"].strip().lower()
+    data = payload.model_dump()
+    email = data["Email_Address"].strip().lower()
     if get_user_by_email(session, email):
         raise HTTPException(status_code=409, detail="Email already registered")
     hashed = get_password_hash(data.pop("Password"))
     u = User(
-        user_name=data["user_name"],
-        location_address=data.get("location_address"),
-        email_address=email,
-        contact_number=data.get("contact_number"),
-        VAT_Number=data.get("VAT_Number"),
-        hashed_pword=hashed,
+        User_Name=data["User_Name"],
+        Location_Address=data.get("Location_Address"),
+        Email_Address=email,
+        Contact_Number=data.get("Contact_Number"),
+        Vat_Number=data.get("Vat_Number"),
+        Hashed_Pword=hashed,
     )
     session.add(u)
     session.commit()
     session.refresh(u)
     return user_out(u)
 
-@users_router.put("/UpdateUsers/{user_id}", response_model=UserPublic)
+@users_router.put("/UpdateUsers/{User_Id}", response_model=UserPublic)
 def update_user(
-    user_id: int, payload: UserCreate, session: Session = Depends(get_session)
+    User_Id: int, payload: UserCreate, session: Session = Depends(get_session)
 ) -> UserPublic:
-    u = session.get(User, user_id)
+    u = session.get(User, User_Id)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
-    new_email = payload.email_address.strip().lower()
-    existing = session.scalar(select(User).where(User.email_address == new_email, User.user_id != user_id))
+    new_email = payload.Email_Address.strip().lower()
+    existing = session.scalar(select(User).where(User.Email_Address == new_email, User.User_Id!= User_Id))
     if existing:
         raise HTTPException(status_code=409, detail="Email already exists")
-    u.user_name = payload.user_name
-    u.location_address = payload.location_address
-    u.email_address = new_email
-    u.contact_number = payload.contact_number
-    u.VAT_Number = payload.VAT_Number
+    u.User_Name = payload.User_Name
+    u.Location_Address = payload.Location_Address
+    u.Email_Address = new_email
+    u.Contact_Number = payload.Contact_Number
+    u.Vat_Number = payload.Vat_Number
     # To allow password change here as well, uncomment:
     # u.hashed_pword = get_password_hash(payload.Password)
     session.commit()
     session.refresh(u)
     return user_out(u)
 
-@users_router.delete("/DeleteUsers/{user_id}", status_code=204)
-def delete_user(user_id: int, session: Session = Depends(get_session)) -> Response:
-    u = session.get(User, user_id)
+@users_router.delete("/DeleteUsers/{User_Id}", status_code=204)
+def delete_user(User_Id: int, session: Session = Depends(get_session)) -> Response:
+    u = session.get(User, User_Id)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     session.delete(u)
@@ -849,7 +866,7 @@ def delete_user(user_id: int, session: Session = Depends(get_session)) -> Respon
     return Response(status_code=204)
 
 # ----------------------------- AUTH (Public) ---------------------------------
-auth_router = APIRouter(tags=["Auth"])
+auth_router = APIRouter(tags=["Authorization"])
 
 @auth_router.post("/Register", response_model=UserPublic, status_code=201, summary="Register User")
 def register_user(payload: UserCreate, session: Session = Depends(get_session)) -> UserPublic:
@@ -857,17 +874,17 @@ def register_user(payload: UserCreate, session: Session = Depends(get_session)) 
     Create a new user. Stores only the hashed password (bcrypt).
     This endpoint is PUBLIC so first-time users can sign up.
     """
-    email = payload.email_address.strip().lower()
+    email = payload.Email_Address.strip().lower()
     if get_user_by_email(session, email):
         raise HTTPException(status_code=409, detail="Email already registered")
     hashed = get_password_hash(payload.Password)
     u = User(
-        user_name=payload.user_name,
-        location_address=payload.location_address,
-        email_address=email,
-        contact_number=payload.contact_number,
-        VAT_Number=payload.VAT_Number,
-        hashed_pword=hashed,
+        User_Name=payload.User_Name,
+        Location_Address=payload.Location_Address,
+        Email_Address=email,
+        Contact_Number=payload.Contact_Number,
+        Vat_Number=payload.Vat_Number,
+        Hashed_Pword=hashed,
     )
     session.add(u)
     session.commit()
@@ -886,11 +903,11 @@ def login_for_access_token(
     """
     email = form_data.username.strip().lower()
     user = get_user_by_email(session, email)
-    if not user or not verify_password(form_data.password, user.hashed_pword):
+    if not user or not verify_password(form_data.password, user.Hashed_Pword):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
-    if not user.is_active:
+    if not user.Is_Active:
         raise HTTPException(status_code=400, detail="Inactive user")
-    access_token = create_access_token(data={"sub": user.email_address})
+    access_token = create_access_token(data={"sub": user.Email_Address})
     return Token(access_token=access_token, token_type="bearer")
 
 @auth_router.get("/me", response_model=UserPublic, summary="Who am I? (Requires Bearer token)")
@@ -902,22 +919,19 @@ def read_me(current_user: User = Depends(get_current_user)) -> UserPublic:
 # IMPORTANT: this is how we LOCK everything by default.
 # We add a global dependency to each "business" router so that every endpoint
 # requires a valid Bearer token. The auth router stays PUBLIC.
-protected = [Depends(get_current_user)]
+require_auth = os.getenv("REQUIRE_CLIENT_AUTH", "true").lower() == "true"
+protected = [Depends(get_current_user)] if require_auth else []
 
-# Protected routers (require Authorization: Bearer <token>)
+# Protected (or open if require_auth=False)
 app.include_router(orders_router, dependencies=protected)
 app.include_router(customers_router, dependencies=protected)
 app.include_router(invoices_router, dependencies=protected)
-app.include_router(agreements_router, dependencies=protected) #newly added
+app.include_router(agreements_router, dependencies=protected)
 app.include_router(users_router, dependencies=protected)
 
-# Public auth endpoints (signup + login)
+# Auth is always public
 app.include_router(auth_router)
-
-
-
-
-
-
-
-
+# ================================ Entrypoint =================================
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
