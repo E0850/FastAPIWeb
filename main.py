@@ -576,7 +576,7 @@ def search_invoice(
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
 
-                Invoice.Invoice_Number.ilike(search_term),
+                cast(Invoice.Invoice_Number, String).ilike(search_term),
                 cast(Invoice.Customer_Number, String).ilike(search_term),
                 cast(Invoice.Order_Number, String).ilike(search_term),
                 cast(Invoice.Invoice_Date, String).ilike(search_term),
@@ -935,5 +935,6 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
