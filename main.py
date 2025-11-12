@@ -95,7 +95,7 @@ class Base(DeclarativeBase):
 # ---------------------------- ORM MODELS SQLALCHEMY-------------------------------------
 class Order(Base):
     __tablename__ = "orders"
-#    __table_args__ = {"schema": "dbo"} 
+    __table_args__ = {"schema": "dbo"} 
     Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     Customer_Number: Mapped[int] = mapped_column(Integer)
     Quantity: Mapped[int] = mapped_column(Integer)
@@ -935,6 +935,7 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
