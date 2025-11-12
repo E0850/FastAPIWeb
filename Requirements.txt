@@ -21,3 +21,8 @@ python-multipart==0.0.9
 # DB driver
 psycopg2==2.9.11
 
+# Either this (just the needed package)
+email-validator==2.2.0
+
+# Or this (pydantic with the "email" extra, which pulls email-validator)
+pydantic[email]==1.10.24
