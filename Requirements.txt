@@ -1,6 +1,5 @@
 # FastAPI + Pydantic v1 series
 fastapi>=0.95,<0.100
-pydantic>=1.10,<2
 
 # ASGI server
 uvicorn[standard]==0.23.2
