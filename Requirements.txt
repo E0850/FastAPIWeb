@@ -1,11 +1,23 @@
-fastapi==0.99.1
-pydantic==1.10.16
+# FastAPI + Pydantic v1 series
+fastapi>=0.95,<0.100
+pydantic>=1.10,<2
+
+# ASGI server
 uvicorn[standard]==0.23.2
-sqlalchemy==2.0.43
-psycopg[binary]
-psycopg2
-python-jose[cryptography]
-passlib[bcrypt]
-python-multipart
-bcrypt==3.2.2
-email-validator
+
+# SQLAlchemy + Postgres driver
+sqlalchemy>=1.4,<3
+psycopg2-binary==2.9.9
+
+# Auth & crypto
+python-jose[cryptography]==3.3.0
+passlib==1.7.4
+bcrypt==4.0.1
+cryptography>=41,<44
+
+# Forms & env
+python-multipart==0.0.9
+
+# DB driver
+psycopg2==2.9.11
+
