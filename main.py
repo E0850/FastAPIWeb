@@ -424,6 +424,11 @@ def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> O
     except IntegrityError:
         session.rollback()
         raise HTTPException(status_code=409, detail="Order number already exists")
+    except Exception as e:
+        session.rollback()
+        import logging
+        logging.exception("Createorders failed")
+        raise HTTPException(status_code=500, detail=f"Createorders failed: {e}")
     session.refresh(o)
     return order_out(o)
 
@@ -935,6 +940,7 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
