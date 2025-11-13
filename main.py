@@ -508,6 +508,9 @@ def search_customer(
         logging.error(f"Search customer failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search customer failed: {str(e)}") 
 
+from sqlalchemy.exc import IntegrityError
+import logging
+
 @customers_router.post("/Createcustomers", response_model=CustomerOut, status_code=201)
 def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
     c = Customer(**payload.model_dump())
@@ -517,6 +520,10 @@ def create_customer(payload: CustomerIn, session: Session = Depends(get_session)
     except IntegrityError:
         session.rollback()
         raise HTTPException(status_code=409, detail="Company name already exists")
+    except Exception as e:
+        session.rollback()
+        logging.exception("Createcustomers failed")  # << logs full traceback in Render
+        raise HTTPException(status_code=500, detail=f"Createcustomers failed: {e}")
     session.refresh(c)
     return customer_out(c)
 
@@ -936,6 +943,7 @@ app.include_router(users_router, dependencies=protected)
 
 # Auth is always public
 app.include_router(auth_router)
+
 
 
 
