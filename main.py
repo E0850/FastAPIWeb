@@ -428,7 +428,7 @@ def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> O
         session.rollback()
         import logging
         logging.exception("Createorders failed")
-        raise HTTPException(status_code=500, detail=f"Createorders failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Create order failed: {e}")
     session.refresh(o)
     return order_out(o)
 
@@ -519,11 +519,11 @@ def create_customer(payload: CustomerIn, session: Session = Depends(get_session)
         session.commit()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Company name already exists")
+        raise HTTPException(status_code=409, detail="Customer name already exists")
     except Exception as e:
         session.rollback()
         logging.exception("Createcustomers failed")  # << logs full traceback in Render
-        raise HTTPException(status_code=500, detail=f"Createcustomers failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Create customer failed: {e}")
     session.refresh(c)
     return customer_out(c)
 
@@ -611,7 +611,12 @@ def create_invoice(payload: InvoiceIn, session: Session = Depends(get_session)) 
         session.commit()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Invoice name already exists")
+        raise HTTPException(status_code=409, detail="Invoice already exists")
+    except Exception as e:
+        session.rollback()
+        import logging
+        logging.exception("Create invoice failed")
+        raise HTTPException(status_code=500, detail=f"Create invoice failed: {e}")
     session.refresh(i)
     return invoice_out(i)
 
@@ -722,6 +727,11 @@ def create_agreement(payload: AgreementIn, session: Session = Depends(get_sessio
     except IntegrityError:
         session.rollback()
         raise HTTPException(status_code=409, detail="Agreement already exists")
+    except Exception as e:
+            session.rollback()
+            import logging
+            logging.exception("Create agreement failed")
+            raise HTTPException(status_code=500, detail=f"Create agreement failed: {e}")
     session.refresh(a)
     return agreement_out(a)    
 
@@ -944,7 +954,10 @@ app.include_router(users_router, dependencies=protected)
 # Auth is always public
 app.include_router(auth_router)
 
-
+# ================================ Entrypoint =================================
+# if __name__ == "__main__":
+#    import uvicorn
+#    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
 
 
 
