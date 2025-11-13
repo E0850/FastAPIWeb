@@ -56,7 +56,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 # ============================ App & CORS (dev-open) ==========================
-app = FastAPI(title="Bugzy API Development - FastAPI, SQLAlchemy, PostgresSQL DB, Pydantic, OAuth2, Passlib Enabled - Swagger UI")
+app = FastAPI(title="Bugzy API Development - FastAPI/SQLAlchemy/Pydantic/Alembic + PostgresSQL DB, OAuth2, Passlib - Swagger UI")
 
 # After app = FastAPI(...)
 
@@ -958,6 +958,7 @@ app.include_router(auth_router)
 # if __name__ == "__main__":
 #    import uvicorn
 #    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
