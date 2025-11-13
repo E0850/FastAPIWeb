@@ -1,12 +1,14 @@
-# FastAPI + Pydantic v1 series
-fastapi>=0.95,<0.100
+# FastAPI (Pydantic v2 compatible)
+fastapi>=0.103,<1.0
 
 # ASGI server
-uvicorn[standard]==0.23.2
+uvicorn[standard]>=0.23
 
-# SQLAlchemy + Postgres driver
-sqlalchemy>=1.4,<3
-psycopg2-binary==2.9.9
+# SQLAlchemy 2.x line (your code uses new-style APIs)
+SQLAlchemy>=2.0
+
+# PostgreSQL driver (choose ONE; psycopg2-binary is easiest)
+psycopg2-binary>=2.9
 
 # Auth & crypto
 python-jose[cryptography]==3.3.0
@@ -15,10 +17,9 @@ bcrypt==4.0.1
 cryptography>=41,<44
 
 # Forms & env
-python-multipart==0.0.9
+python-multipart>=0.0.9
+python-dotenv>=1.0
 
-# DB driver
-psycopg2==2.9.11
-
-# Or this (pydantic with the "email" extra, which pulls email-validator)
-pydantic[email]==1.10.24
+# Pydantic v2 (+ core) to match your code using model_dump()
+pydantic[email]>=2,<3
+pydantic-core>=2,<3
