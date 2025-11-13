@@ -936,10 +936,6 @@ app.include_router(users_router, dependencies=protected)
 
 # Auth is always public
 app.include_router(auth_router)
-# ================================ Entrypoint =================================
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run("SimpleAPI_SQLAlchemy_version:app", host="127.0.0.1", port=8000, reload=True)
 
 
 
