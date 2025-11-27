@@ -21,9 +21,10 @@ import os
 from dotenv import load_dotenv  # pip install python-dotenv
 from sqlalchemy.orm import Session
 
+from fastapi import FastAPI, Request
 
 from datetime import datetime, timedelta, timezone
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Union
 
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +44,15 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
 
+
+# Map role to scopes
+ROLE_TO_SCOPES = {
+    "admin": ["orders:read", "orders:write", "agreements:read", "agreements:write", "users:manage"],
+    "manager": ["orders:read", "orders:write", "agreements:read"],
+    "viewer": ["orders:read", "agreements:read"],
+    "user": ["orders:read"]
+}
+
 # ============================ Security Config ================================
 # For study/demo purposes only—use environment variables in production!
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
@@ -56,7 +66,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 # ============================ App & CORS (dev-open) ==========================
-app = FastAPI(title="Bugzy API Development - FastAPI/SQLAlchemy/Pydantic/Alembic + PostgresSQL DB, OAuth2, Passlib - Swagger UI")
+app = FastAPI(title="Bugzy API Development - FastAPI/SQLAlchemy/Pydantic/Alembic + PostgreSQL, OAuth2, Passlib, Token Revocation/Expiration/Versioning, Role Assignment - Swagger UI")
 
 # After app = FastAPI(...)
 
@@ -105,19 +115,24 @@ class Customer(Base):
     __tablename__ = "customers"
     __table_args__ = {"schema": "dbo"} 
     Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=False)
+    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=True)
+    Customer_Address: Mapped[str] = mapped_column(String(50), nullable=True)
+    Contact_Number: Mapped[str] = mapped_column(String(15), nullable=True)
+    Email_Address: Mapped[EmailStr] = mapped_column(String(50), nullable=True)
 
 class User(Base):
     __tablename__ = "users"
     __table_args__ = {"schema": "dbo"} 
     User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    User_Name: Mapped[str] = mapped_column(String(100), nullable=False)
+    User_Name: Mapped[str] = mapped_column(String(100), nullable=True)
     Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    Email_Address: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    Email_Address: Mapped[str] = mapped_column(String(255), nullable=True, unique=True)
     Contact_Number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     Vat_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    Hashed_Pword: Mapped[str] = mapped_column(nullable=False)
+    Hashed_Pword: Mapped[str] = mapped_column(nullable=True)
     Is_Active: Mapped[bool] = mapped_column(Boolean, default=True)
+    Role: Mapped[str] = mapped_column(String(50), nullable=True, default="user")
+    TokenVersion: Mapped[int] = mapped_column(Integer, nullable=True, default=1)    
    
 class Invoice(Base):
     __tablename__ = "invoices"
@@ -126,9 +141,9 @@ class Invoice(Base):
     Order_Number: Mapped[int] = mapped_column(Integer)
     Customer_Number: Mapped[int] = mapped_column(Integer)
     Invoice_Date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    Invoice_Email: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)    
     Amount: Mapped[int] = mapped_column(Integer)
     
-
 class Agreement(Base):
     __tablename__ = "agreements"
     __table_args__ = {"schema": "dbo"} 
@@ -158,7 +173,7 @@ class Agreement(Base):
     Project_number: Mapped[str] = mapped_column(String(6), nullable=True)    
     
 # Create tables if missing (note: does not ALTER existing tables)
-Base.metadata.create_all(engine)
+# Base.metadata.create_all(engine)
 
 # ============================ Session dependency =============================
 def get_session() -> Iterator[Session]:
@@ -174,6 +189,7 @@ class OrderIn(BaseModel):
 
 class OrderOut(OrderIn):
     Order_Number: int
+
 def order_out(o: Order) -> OrderOut:
     return OrderOut(
         Order_Number=o.Order_Number,
@@ -185,11 +201,20 @@ def order_out(o: Order) -> OrderOut:
 # customers
 class CustomerIn(BaseModel):
     Customer_Name: str
+    Customer_Address: str
+    Contact_Number: str
+    Email_Address: EmailStr
 class CustomerOut(CustomerIn):
     Customer_Number: int
 
 def customer_out(c: Customer) -> CustomerOut:
-    return CustomerOut(Customer_Number=c.Customer_Number, Customer_Name=c.Customer_Name)
+    return CustomerOut(
+        Customer_Number=c.Customer_Number, 
+        Customer_Name=c.Customer_Name, 
+        Customer_Address=c.Customer_Address, 
+        Contact_Number=c.Contact_Number, 
+        Email_Address=c.Email_Address,
+    )
 
 # Users (separate Create vs Public to avoid exposing passwords)
 class UserCreate(BaseModel):
@@ -208,6 +233,9 @@ class UserPublic(BaseModel):
     Contact_Number: Optional[str] = None
     Vat_Number: Optional[str] = None
     Is_Active: bool = True
+    Role: Optional[str] = None
+    TokenVersion: Optional[int] = None
+
 def user_out(u: User) -> UserPublic:
     return UserPublic(
         User_Id=u.User_Id,
@@ -217,12 +245,15 @@ def user_out(u: User) -> UserPublic:
         Contact_Number=u.Contact_Number or "",
         Vat_Number=u.Vat_Number or "",
         Is_Active=bool(u.Is_Active),
+        Role=u.Role,
+        TokenVersion=u.TokenVersion,
     )
 
 # invoices
 class InvoiceIn(BaseModel):
     Order_Number: int
     Invoice_Date: str
+    Invoice_Email: Optional[str] = None
     Amount: int
     Customer_Number: int
 
@@ -233,6 +264,7 @@ def invoice_out(i: Invoice) -> InvoiceOut:
         Invoice_Number=i.Invoice_Number,
         Order_Number=i.Order_Number,
         Invoice_Date=i.Invoice_Date,
+        Invoice_Email=i.Invoice_Email,
         Amount=i.Amount,
         Customer_Number=i.Customer_Number,
     )
@@ -338,6 +370,7 @@ def create_access_token(data: dict, expires_minutes: int = TOKEN_EXPIRES_MIN) ->
 def get_user_by_email(session: Session, email: str) -> Optional[User]:
     return session.scalar(select(User).where(User.Email_Address == email))
 
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     session: Session = Depends(get_session),
@@ -351,21 +384,41 @@ def get_current_user(
         detail="Could not validate credentials (invalid or expired token)",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str | None = payload.get("sub")  # we store email in 'sub'
-        if email is None:
+        email = payload.get("sub")
+        token_ver = payload.get("ver")
+        scopes = payload.get("scopes", [])  # Extract scopes from JWT
+
+        if email is None or token_ver is None:
             raise credentials_error
-        token_data = TokenData(email=email)
+
+        user = get_user_by_email(session, email)
+        if user is None or not user.Is_Active:
+            raise credentials_error
+
+        # Check token version for revocation
+        if token_ver != user.TokenVersion:
+            raise HTTPException(status_code=401, detail="Token revoked")
+
+        # Attach scopes to user object for convenience
+        user.Scopes = scopes
+
+        return user
+
     except JWTError:
         raise credentials_error
-
-    user = get_user_by_email(session, token_data.email) if token_data.email else None
-    if user is None:
+    except Exception as e:
+        logging.error(f"Token validation failed: {e}")
         raise credentials_error
-    if not user.Is_Active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return user
+
+def require_role(allowed_roles: list[str]):
+    def role_checker(current_user: User = Depends(get_current_user)):
+        if current_user.Role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return current_user
+    return role_checker
 
 # ================================ ROUTERS ====================================
 # orders
@@ -400,7 +453,6 @@ def search_order(
         if SQRY:
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
-
                 cast(Order.Order_Number, String).ilike(search_term),
                 cast(Order.Customer_Number, String).ilike(search_term),
                 cast(Order.Quantity, String).ilike(search_term),
@@ -415,22 +467,26 @@ def search_order(
         logging.error(f"Search order failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search order failed: {str(e)}")
 
-@orders_router.post("/Createorders", response_model=OrderOut, status_code=201)
-def create_order(payload: OrderIn, session: Session = Depends(get_session)) -> OrderOut:
-    o = Order(**payload.model_dump())
-    session.add(o)
+@orders_router.post("/Createorders", response_model=List[OrderOut], status_code=201)
+def create_orders(payload: List[OrderIn], session: Session = Depends(get_session)):
+    created = []
+    for item in payload:
+        o = Order(**item.model_dump())
+        session.add(o)
+        created.append(o)
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Order number already exists")
+        raise HTTPException(status_code=409, detail="Order already exists")
     except Exception as e:
         session.rollback()
         import logging
-        logging.exception("Createorders failed")
+        logging.exception("Create order failed")
         raise HTTPException(status_code=500, detail=f"Create order failed: {e}")
-    session.refresh(o)
-    return order_out(o)
+    for o in created:
+        session.refresh(o)
+    return [order_out(o) for o in created]
 
 @orders_router.put("/Updateorders/{Order_Number}", response_model=OrderOut)
 def update_order(
@@ -482,7 +538,6 @@ def list_customers(
     return [customer_out(c) for c in session.scalars(stmt).all()]
 
 
-
 @customers_router.get("/SearchCustomer", response_model=List[CustomerOut])
 def search_customer(
     SQRY: Optional[str] = Query(None, description="Search across all fields"),
@@ -494,10 +549,11 @@ def search_customer(
         if SQRY:
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
-
                 cast(Customer.Customer_Number, String).ilike(search_term),
-                cast(Customer.Customer_Name, String).ilike(search_term)
-                
+                cast(Customer.Customer_Name, String).ilike(search_term),
+                cast(Customer.Customer_Address, String).ilike(search_term),
+                cast(Customer.Contact_Number, String).ilike(search_term),
+                cast(Customer.Email_Address, String).ilike(search_term)                
             ))
 
         stmt = stmt.order_by(Customer.Customer_Number)
@@ -511,21 +567,26 @@ def search_customer(
 from sqlalchemy.exc import IntegrityError
 import logging
 
-@customers_router.post("/Createcustomers", response_model=CustomerOut, status_code=201)
-def create_customer(payload: CustomerIn, session: Session = Depends(get_session)) -> CustomerOut:
-    c = Customer(**payload.model_dump())
-    session.add(c)
+@customers_router.post("/Createcustomers", response_model=List[CustomerOut], status_code=201)
+def create_customer(payload: List[CustomerIn], session: Session = Depends(get_session)):
+    created = []
+    for item in payload:
+        c = Customer(**item.model_dump())
+        session.add(c)
+        created.append(c)
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Customer name already exists")
+        raise HTTPException(status_code=409, detail="Customer already exists")
     except Exception as e:
         session.rollback()
-        logging.exception("Createcustomers failed")  # << logs full traceback in Render
+        import logging
+        logging.exception("Create customer  failed")
         raise HTTPException(status_code=500, detail=f"Create customer failed: {e}")
-    session.refresh(c)
-    return customer_out(c)
+    for c in created:
+        session.refresh(c)
+    return [customer_out(c) for c in created]
 
 @customers_router.put("/Updatecustomers/{Customer_Number}", response_model=CustomerOut)
 def update_customer(
@@ -535,6 +596,9 @@ def update_customer(
     if not c:
         raise HTTPException(status_code=404, detail="Customer not found")
     c.Customer_Name = payload.Customer_Name
+    c.Customer_Address = payload.Customer_Address
+    c.Contact_Number = payload.Contact_Number
+    c.Email_Address = payload.Email_Address
     try:
         session.commit()
     except IntegrityError:
@@ -587,11 +651,11 @@ def search_invoice(
         if SQRY:
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
-
                 cast(Invoice.Invoice_Number, String).ilike(search_term),
                 cast(Invoice.Customer_Number, String).ilike(search_term),
                 cast(Invoice.Order_Number, String).ilike(search_term),
                 cast(Invoice.Invoice_Date, String).ilike(search_term),
+                cast(Invoice.Invoice_Email, String).ilike(search_term),
                 cast(Invoice.Amount, String).ilike(search_term)  
             ))
 
@@ -603,10 +667,13 @@ def search_invoice(
         logging.error(f"Search invoice failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search invoice failed: {str(e)}")
 
-@invoices_router.post("/Createinvoices", response_model=InvoiceOut, status_code=201)
-def create_invoice(payload: InvoiceIn, session: Session = Depends(get_session)) -> InvoiceOut:
-    i = Invoice(**payload.model_dump())
-    session.add(i)
+@invoices_router.post("/Createinvoices", response_model=List[InvoiceOut], status_code=201)
+def create_invoices(payload: List[InvoiceIn], session: Session = Depends(get_session)):
+    created = []
+    for item in payload:
+        i = Invoice(**item.model_dump())
+        session.add(i)
+        created.append(i)
     try:
         session.commit()
     except IntegrityError:
@@ -617,8 +684,9 @@ def create_invoice(payload: InvoiceIn, session: Session = Depends(get_session)) 
         import logging
         logging.exception("Create invoice failed")
         raise HTTPException(status_code=500, detail=f"Create invoice failed: {e}")
-    session.refresh(i)
-    return invoice_out(i)
+    for i in created:
+        session.refresh(i)
+    return [invoice_out(i) for i in created]
 
 @invoices_router.put("/Updateinvoices/{Invoice_Number}", response_model=InvoiceOut)
 def update_invoice(
@@ -629,6 +697,7 @@ def update_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     i.Order_Number = payload.Order_Number
     i.Invoice_Date = payload.Invoice_Date
+    i.Invoice_Email = payload.Invoice_Email
     i.Amount = payload.Amount
     i.Customer_Number = payload.Customer_Number
     try:
@@ -718,22 +787,26 @@ def search_agreements(
         logging.error(f"Search agreement failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search agreement failed: {str(e)}")
 
-@agreements_router.post("/Createagreements", response_model=AgreementOut, status_code=201)
-def create_agreement(payload: AgreementIn, session: Session = Depends(get_session)) -> AgreementOut:
-    a = Agreement(**payload.model_dump())
-    session.add(a)
+@agreements_router.post("/Createagreements", response_model=List[AgreementOut], status_code=201)
+def create_agreement(payload: List[AgreementIn], session: Session = Depends(get_session)):
+    created = []
+    for item in payload:
+        a = Agreement(**item.model_dump())
+        session.add(a)
+        created.append(a)
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
         raise HTTPException(status_code=409, detail="Agreement already exists")
     except Exception as e:
-            session.rollback()
-            import logging
-            logging.exception("Create agreement failed")
-            raise HTTPException(status_code=500, detail=f"Create agreement failed: {e}")
-    session.refresh(a)
-    return agreement_out(a)    
+        session.rollback()
+        import logging
+        logging.exception("Create order failed")
+        raise HTTPException(status_code=500, detail=f"Agreement create failed: {e}")
+    for a in created:
+        session.refresh(a)
+    return [agreement_out(a) for a in created]
 
 @agreements_router.put("/Updateagreements/{Agreement_number}", response_model=AgreementOut)
 def update_agreement(
@@ -775,35 +848,38 @@ def update_agreement(
     session.refresh(a)
     return agreement_out(a)
 
+
 @agreements_router.delete("/DeleteAgreement/{Agreement_number}", status_code=204)
-def delete_agreement(
-    Agreement_number: str, session: Session = Depends(get_session)
-) -> Response:
+def delete_agreement(Agreement_number: str, session: Session = Depends(get_session)) -> Response:
     a = session.get(Agreement, Agreement_number)
     if not a:
         raise HTTPException(status_code=404, detail="Agreement not found")
     session.delete(a)
-    session.commit()    
+    session.commit()
+    return Response(status_code=204)
 
 # Users (basic listing/getting kept for study; still protected)
 users_router = APIRouter(tags=["Users"])
 
-@users_router.get("/GetUser/{User_Id}", response_model=UserPublic)
-def get_user(User_Id: int, session: Session = Depends(get_session)) -> UserPublic:
-    u = session.get(User, User_Id)
+@users_router.get("/GetUser/{email}", response_model=UserPublic)
+def get_user(email: str, session: Session = Depends(get_session)) -> UserPublic:
+    normalized_email = email.strip().lower()
+    u = session.scalar(select(User).where(User.Email_Address == normalized_email))
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return user_out(u)
 
+
 @users_router.get("/ListUsers", response_model=List[UserPublic])
 def list_users(
-    User_Id: Optional[int] = None, session: Session = Depends(get_session)
+    email: Optional[str] = None, session: Session = Depends(get_session)
 ) -> List[UserPublic]:
     stmt = select(User)
-    if User_Id is not None:
-        stmt = stmt.where(User.User_Id == User_Id)
-    stmt = stmt.order_by(User.User_Id)
+    if email:
+        stmt = stmt.where(User.Email_Address == email.strip().lower())
+    stmt = stmt.order_by(User.Email_Address)
     return [user_out(u) for u in session.scalars(stmt).all()]
+
 
 @users_router.get("/SearchUser", response_model=List[UserPublic])
 def search_user(
@@ -812,25 +888,20 @@ def search_user(
 ) -> List[UserPublic]:
     try:
         stmt = select(User)
-
         if SQRY:
             search_term = f"%{SQRY}%"
             stmt = stmt.where(or_(
-
-                cast(User.User_Id, String).ilike(search_term),
+                cast(User.Email_Address, String).ilike(search_term),
                 cast(User.User_Name, String).ilike(search_term),
                 cast(User.Location_Address, String).ilike(search_term),
-                cast(User.Email_Address, String).ilike(search_term),
                 cast(User.Contact_Number, String).ilike(search_term),
                 cast(User.Vat_Number, String).ilike(search_term),
                 cast(User.Hashed_Pword, String).ilike(search_term),
                 cast(User.Is_Active, String).ilike(search_term)
             ))
-
-        stmt = stmt.order_by(User.User_Id)
+        stmt = stmt.order_by(User.Email_Address)
         results = session.scalars(stmt).all()
         return [user_out(u) for u in results]
-
     except Exception as e:
         logging.error(f"Search user failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search user failed: {str(e)}")
@@ -856,34 +927,67 @@ def create_user(payload: UserCreate, session: Session = Depends(get_session)) ->
     session.refresh(u)
     return user_out(u)
 
-@users_router.put("/UpdateUsers/{User_Id}", response_model=UserPublic)
+
+@users_router.put("/UpdateUsers/{email}", response_model=UserPublic)
 def update_user(
-    User_Id: int, payload: UserCreate, session: Session = Depends(get_session)
+    email: str, payload: UserCreate, session: Session = Depends(get_session)
 ) -> UserPublic:
-    u = session.get(User, User_Id)
+    normalized_email = email.strip().lower()
+    u = get_user_by_email(session, normalized_email)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
+
     new_email = payload.Email_Address.strip().lower()
-    existing = session.scalar(select(User).where(User.Email_Address == new_email, User.User_Id!= User_Id))
-    if existing:
-        raise HTTPException(status_code=409, detail="Email already exists")
+
+    # If changing email, ensure uniqueness against other users
+    if new_email != normalized_email:
+        existing = session.scalar(
+            select(User).where(
+                User.Email_Address == new_email,
+                User.User_Id != u.User_Id
+            )
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already exists")
+
     u.User_Name = payload.User_Name
     u.Location_Address = payload.Location_Address
     u.Email_Address = new_email
     u.Contact_Number = payload.Contact_Number
     u.Vat_Number = payload.Vat_Number
-    # To allow password change here as well, uncomment:
-    # u.hashed_pword = get_password_hash(payload.Password)
+    # Optional: allow password change
+    # u.Hashed_Pword = get_password_hash(payload.Password)
+
     session.commit()
     session.refresh(u)
     return user_out(u)
 
-@users_router.delete("/DeleteUsers/{User_Id}", status_code=204)
-def delete_user(User_Id: int, session: Session = Depends(get_session)) -> Response:
-    u = session.get(User, User_Id)
+@users_router.put("/AssignRole/{email}", status_code=200, dependencies=[Depends(require_role(["admin"]))])
+def assign_role_by_email(email: str, new_role: str, session: Session = Depends(get_session)):
+    u = get_user_by_email(session, email.strip().lower())
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    u.Role = new_role
+    session.commit()
+    return {"message": f"Role updated to {new_role} for {email}"}
+
+
+@users_router.delete("/DeleteUsers/{email}", status_code=204, dependencies=[Depends(require_role(["admin"]))])
+def delete_user(email: str, session: Session = Depends(get_session)) -> Response:
+    normalized_email = email.strip().lower()
+    u = get_user_by_email(session, normalized_email)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     session.delete(u)
+    session.commit()
+    return Response(status_code=204)
+
+@users_router.post("/RevokeTokens/{email}", status_code=204, dependencies=[Depends(require_role(["admin"]))])
+def revoke_tokens_by_email(email: str, session: Session = Depends(get_session)):
+    u = get_user_by_email(session, email.strip().lower())
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    u.TokenVersion = (u.TokenVersion or 1) + 1
     session.commit()
     return Response(status_code=204)
 
@@ -915,21 +1019,30 @@ def register_user(payload: UserCreate, session: Session = Depends(get_session)) 
 
 @auth_router.post("/token", response_model=Token, summary="Login for Access Token")
 def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),  # expects fields: username, password
+    form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session)
 ) -> Token:
-    """
-    OAuth2 Password Flow:
-      - Send form data: username=<email>, password=<your_password>
-      - On success, you receive a JWT to put into Authorization header as: Bearer <token>
-    """
     email = form_data.username.strip().lower()
     user = get_user_by_email(session, email)
     if not user or not verify_password(form_data.password, user.Hashed_Pword):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     if not user.Is_Active:
         raise HTTPException(status_code=400, detail="Inactive user")
-    access_token = create_access_token(data={"sub": user.Email_Address})
+    
+    ROLE_TO_SCOPES = {
+        "admin": ["orders:read", "orders:write", "customers:read", "customers:write", "invoices:read", "invoices:write", "agreements:read", "agreements:write", "users:manage"],
+        "manager": ["orders:read", "orders:write", "customers:read", "customers:write", "invoices:read", "invoices:write", "agreements:read", "agreements:write"],
+        "viewer": ["orders:read", "customers:read", "invoices:read", "agreements:read"],
+    }
+
+    scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
+
+    access_token = create_access_token(data={
+        "sub": user.Email_Address,
+        "ver": user.TokenVersion,
+        "scopes": scopes
+    })
+
     return Token(access_token=access_token, token_type="bearer")
 
 @auth_router.get("/me", response_model=UserPublic, summary="Who am I? (Requires Bearer token)")
@@ -955,14 +1068,6 @@ app.include_router(users_router, dependencies=protected)
 app.include_router(auth_router)
 
 # ================================ Entrypoint =================================
-# if __name__ == "__main__":
-#    import uvicorn
-#    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
-
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
