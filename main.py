@@ -23,6 +23,22 @@ from sqlalchemy.orm import Session
 
 from fastapi import FastAPI, Request
 
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+
+app = FastAPI()
+
+# Mount static folder
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/docs-custom", response_class=HTMLResponse)
+async def custom_docs():
+    with open("templates/swagger-custom.html") as f:
+        return f.read()
+
+
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, List, Optional, Union
 
@@ -897,7 +913,7 @@ def search_user(
                 cast(User.Contact_Number, String).ilike(search_term),
                 cast(User.Vat_Number, String).ilike(search_term),
                 cast(User.Hashed_Pword, String).ilike(search_term),
-                cast(User.Is_Active, String).ilike(search_term)
+                cast(User.Role, String).ilike(search_term)                
             ))
         stmt = stmt.order_by(User.Email_Address)
         results = session.scalars(stmt).all()
@@ -1045,7 +1061,7 @@ def login_for_access_token(
 
     return Token(access_token=access_token, token_type="bearer")
 
-@auth_router.get("/me", response_model=UserPublic, summary="Who am I? (Requires Bearer token)")
+@auth_router.get("/me", response_model=UserPublic, summary="Identify me! (Requires Bearer token)")
 def read_me(current_user: User = Depends(get_current_user)) -> UserPublic:
     """Quick way to test your token."""
     return user_out(current_user)
@@ -1066,6 +1082,17 @@ app.include_router(users_router, dependencies=protected)
 
 # Auth is always public
 app.include_router(auth_router)
+
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/docs-custom", include_in_schema=False)
+def custom_docs():
+    file_path = STATIC_DIR / "swagger-custom.html"
+    if not file_path.exists():
+        return HTMLResponse(content="<h1>swagger-custom.html not found in static folder</h1>", status_code=404)
+    html_content = file_path.read_text(encoding="utf-8")
+    return HTMLResponse(content=html_content)
 
 # ================================ Entrypoint =================================
 if __name__ == "__main__":
