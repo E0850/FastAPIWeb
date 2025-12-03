@@ -2,113 +2,64 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="stylesheet" href="/static/swagger-dark.css?v=3">
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bugzy API Swagger UI</title>
-    <!-- Swagger UI CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css">
-    <!-- Dark Theme CSS -->
-    <style>
-        body { background-color: #0d1117; color: #fff; margin: 0; font-family: sans-serif; }
-        #auth-bar {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px;
-            background: #0d1117;
-            color: #fff;
-            border-bottom: 1px solid #333;
-            flex-wrap: wrap;
-        }
-        #auth-bar label { font-weight: bold; margin-right: 8px; }
-        #auth-bar input {
-            padding: 4px;
-            border: 1px solid #555;
-            border-radius: 4px;
-            background: #1e293b;
-            color: #fff;
-            min-width: 110px;
-        }
-        #auth-bar button {
-            background: #4CAF50;
-            color: #fff;
-            padding: 5px 10px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        #auth-bar button:hover { background: #45a049; }
-        #swagger-ui { padding: 10px; margin-top: 0; }
-        /* Hide default Swagger Authorize button and modal */
-        .swagger-ui .auth-wrapper,
-        .swagger-ui .authorization__btn,
-        .swagger-ui .modal-ux,
-        .swagger-ui .modal-ux-content {
-            display: none !important;
-        }
-        /* Remove empty space and make leftover strip black */
-        .swagger-ui .topbar,
-        .swagger-ui .auth-wrapper {
-            background: #0d1117 !important;
-            height: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bugzy API – Swagger UI (Custom)</title>
+  <!-- Dark theme and overrides -->
+  <link rel="stylesheetcss
+  <!-- Swagger UI assets from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5-ui-standalone-preset.js</script>
+  <style>
+    :root{
+      color-scheme: dark;
+    }
+    body { margin: 0; background-color: #0d1117; }
+    #app-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 14px 20px; background:#0d1117; border-bottom:1px solid #1f2937; color:#fff;
+      position: sticky; top:0; z-index: 1000;
+    }
+    #app-header .title { font: 600 16px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    #app-header .links a { color:#93c5fd; text-decoration:none; margin-left:16px; }
+    #app-header .links a:hover { text-decoration:underline; }
+    #swagger-ui { max-width: 1200px; margin: 0 auto; }
+  </style>
 </head>
 <body>
-    <div id="auth-bar">
-        <label>OAuth2 Authorization Login:</label>
-        <input type="text" id="username" placeholder="username">
-        <input type="password" id="password" placeholder="password">
-        <input type="text" id="client_id" placeholder="client_id">
-        <input type="text" id="client_secret" placeholder="client_secret">
-        <button id="login-btn">Authorize</button>
+  <header id="app-header">
+    <div class="title">🐞 Bugzy API – Swagger UI</div>
+    <div class="links">
+      /docsDefault Docs</a>
+      /docs-darkDark Docs</a>
+      /openapi.jsonOpenAPI JSON</a>
     </div>
+  </header>
 
-    <div id="swagger-ui"></div>
+  <div id="swagger-ui"></div>
 
-    <!-- Swagger UI Bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
-    <script>
-        // Handle login and store token
-        document.getElementById('login-btn').onclick = async function() {
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const clientId = document.getElementById('client_id').value;
-            const clientSecret = document.getElementById('client_secret').value;
+  <script>
+    // Initialize Swagger UI. The OpenAPI spec is served by FastAPI at /openapi.json
+    const ui = SwaggerUIBundle({
+      url: '/openapi.json',
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+      layout: 'BaseLayout',
+      // TryItOut enabled for convenience
+      tryItOutEnabled: true,
+      // Deep linking for shareable URLs
+      deepLinking: true,
+      // Display operation IDs to help debugging
+      displayOperationId: true,
+      // OAuth2 config (uses FastAPI's /token endpoint)
+      // You can tailor these to your deployment if needed
+      oauth2RedirectUrl: window.location.origin + '/docs/oauth2-redirect',
+      docExpansion: 'none', // collapse by default
+      defaultModelsExpandDepth: -1 // hide schemas panel by default
+    });
 
-            const bodyData = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`;
-
-            const res = await fetch('/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: bodyData
-            });
-            const data = await res.json();
-            if (data.access_token) {
-                window.localStorage.setItem('swagger_access_token', data.access_token);
-                alert('Authorized! Token stored.');
-            } else {
-                alert('Login failed');
-            }
-        };
-
-        // Initialize Swagger UI
-        const ui = SwaggerUIBundle({
-            url: '/openapi.json',
-            dom_id: '#swagger-ui',
-            presets: [SwaggerUIBundle.presets.apis],
-            layout: 'BaseLayout',
-            requestInterceptor: (req) => {
-                const token = window.localStorage.getItem('swagger_access_token');
-                if (token) {
-                    req.headers['Authorization'] = `Bearer ${token}`;
-                }
-                return req;
-            }
-        });
-    </script>
+    // Optional: logo tweak
+    const topbar = document.querySelector('.swagger-ui .topbar');
+    if (topbar) topbar.style.display = 'none';
+  </script>
 </body>
 </html>
