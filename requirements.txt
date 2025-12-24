@@ -23,3 +23,8 @@ python-dotenv>=1.0
 # Pydantic v2 (+ core) to match your code using model_dump()
 pydantic[email]>=2,<3
 pydantic-core>=2,<3
+
+# SlowAPI
+slowapi>=0.1.9
+
+
