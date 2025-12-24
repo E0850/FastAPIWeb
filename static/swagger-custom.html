@@ -1,114 +1,207 @@
 
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="dark">
 <head>
-    <link rel="stylesheet" href="/static/swagger-dark.css?v=3">
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bugzy API Swagger UI</title>
-    <!-- Swagger UI CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css">
-    <!-- Dark Theme CSS -->
-    <style>
-        body { background-color: #0d1117; color: #fff; margin: 0; font-family: sans-serif; }
-        #auth-bar {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px;
-            background: #0d1117;
-            color: #fff;
-            border-bottom: 1px solid #333;
-            flex-wrap: wrap;
-        }
-        #auth-bar label { font-weight: bold; margin-right: 8px; }
-        #auth-bar input {
-            padding: 4px;
-            border: 1px solid #555;
-            border-radius: 4px;
-            background: #1e293b;
-            color: #fff;
-            min-width: 110px;
-        }
-        #auth-bar button {
-            background: #4CAF50;
-            color: #fff;
-            padding: 5px 10px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        #auth-bar button:hover { background: #45a049; }
-        #swagger-ui { padding: 10px; margin-top: 0; }
-        /* Hide default Swagger Authorize button and modal */
-        .swagger-ui .auth-wrapper,
-        .swagger-ui .authorization__btn,
-        .swagger-ui .modal-ux,
-        .swagger-ui .modal-ux-content {
-            display: none !important;
-        }
-        /* Remove empty space and make leftover strip black */
-        .swagger-ui .topbar,
-        .swagger-ui .auth-wrapper {
-            background: #0d1117 !important;
-            height: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <title>Bugzy API — Custom Docs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Swagger UI CSS (proper tag) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css">
+  <!-- Your dark theme overrides -->
+  <link rel="stylesheet" href="/static/swagger-dark.css?v=36">
+
+  <style>
+    /* Hide built-in Authorize button and the topbar Explore URL input */
+    .swagger-ui .auth-wrapper,
+    .swagger-ui .btn.authorize { display: none !important; }
+    .swagger-ui .topbar .download-url-wrapper { display: none !important; }
+
+    /* Top login strip */
+    .login-strip {
+      display: flex; gap: 8px; align-items: center;
+      background: #0d1117; border-bottom: 1px solid #4b5563;
+      padding: 10px 16px; position: sticky; top: 0; z-index: 999;
+    }
+    .login-strip input {
+      background-color: #1e293b; color: #fff; border: 1px solid #4b5563;
+      padding: 6px 8px; border-radius: 4px; min-width: 220px;
+    }
+    .login-strip button {
+      background: transparent; color: #93c5fd; border: 1px solid #4b5563;
+      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    }
+    .login-strip button:hover { background: #1e293b; border-color: #93c5fd; }
+    .login-status { margin-left: auto; color: #cfd8dc; font-size: 12px; }
+    .login-status .ok { color: #22c55e; } .login-status .fail { color: #ef4444; }
+
+    /* Overview teaser */
+    .api-overview { max-width: 1000px; margin: 16px auto; padding: 0 16px; }
+    .api-overview h2 { margin: 8px 0; font-size: 20px; font-weight: 700; color: #fff; }
+    .api-overview .desc {
+      color: #cfd8dc; line-height: 1.6; font-size: 14px;
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    }
+    .api-overview .desc.expanded { -webkit-line-clamp: unset; display: block; }
+    .api-overview .toggle-btn {
+      margin-top: 6px; background: transparent; color: #93c5fd; border: 1px solid #4b5563;
+      padding: .35rem .6rem; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    .api-overview .toggle-btn:hover { background: #1e293b; border-color: #93c5fd; }
+    .api-overview .cite { margin-top: 8px; font-size: 12px; color: #93c5fd; }
+
+    /* Container for Swagger */
+    #swagger-ui { margin-top: 8px; }
+  </style>
 </head>
-<body>
-    <div id="auth-bar">
-        <label>OAuth2 Authorization Login:</label>
-        <input type="text" id="username" placeholder="username">
-        <input type="password" id="password" placeholder="password">
-        <input type="text" id="client_id" placeholder="client_id">
-        <input type="text" id="client_secret" placeholder="client_secret">
-        <button id="login-btn">Authorize</button>
+<body class="swagger-ui" id="docs-custom">
+
+  <!-- === Login Strip (email + password) === -->
+  <div class="login-strip">
+    <strong style="color:#fff;">Login (OAuth2 Password)</strong>
+    <input id="email" type="email" placeholder="Email (username)" autocomplete="username">
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="btnLogin">Login</button>
+    <button id="btnLogout">Logout</button>
+    <div class="login-status" id="loginStatus">Not logged in</div>
+  </div>
+
+  <!-- === Overview teaser / expand (will be moved below title by script) === -->
+  <div class="api-overview" id="apiOverview">
+    <h2>API Platform Overview and Key Features:</h2>
+    <div id="overviewDesc" class="desc">
+      This API platform is built on FastAPI with SQLAlchemy ORM, Pydantic for data validation, and Alembic for database migrations.
+      It supports static files and custom Swagger UIs with configurable CORS middleware. Security includes OAuth2 Password flow with JWT (HS256),
+      password hashing via Passlib (Argon2id preferred, bcrypt fallback), bearer-protected routes controlled by REQUIRE_CLIENT_AUTH, user activation checks,
+      token revocation/versioning, and role-to-scope mapping for RBAC. Rate limiting and login protections use SlowAPI with sticky per-identity keys,
+      a custom 429 handler, and an “attempts remaining” counter. Pagination supports limit and offset, while full-field search spans multiple endpoints.
+      Error handling is consistent across 404, 409, 400, 401, and 500 responses. Additional Phase 2 enhancements include CRUD endpoints for Orders,
+      Customers, Invoices, Agreements, email-based user operations, strict CORS enforcement, secrets moved to environment variables, HTTPS at deployment layer,
+      and improved logging. Miscellaneous features include a dark-themed Swagger UI via CDN with custom CSS, favicon, and an HTML docs page.
+      Future Enhancements (Phase 3): OAuth2 Authorization Code + PKCE, IdP integration (Azure AD, Okta, Auth0), asymmetric JWT signing (RS256),
+      refresh token hygiene, fine-grained RBAC, secrets management (Vault/KMS), structured logging and tracing, containerization with Docker/Kubernetes,
+      reverse proxy with TLS, and WAF/DDoS protection.
     </div>
+    <button id="toggleOverview" class="toggle-btn" aria-expanded="false" aria-controls="overviewDesc">Show more</button>
+    
+<div class="cite">  
+  <h2>About the Author:</h2>
+  <a href="http://www.linkedin.com/in/fernando-losantos-33a746124/" target="_blank" rel="noopener noreferrer">
+    http://www.linkedin.com/in/fernando-losantos-33a746124/
+  </a>
+</div>
 
-    <div id="swagger-ui"></div>
+  </div>
 
-    <!-- Swagger UI Bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
-    <script>
-        // Handle login and store token
-        document.getElementById('login-btn').onclick = async function() {
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const clientId = document.getElementById('client_id').value;
-            const clientSecret = document.getElementById('client_secret').value;
+  <!-- === Swagger UI root === -->
+  <div id="swagger-ui"></div>
 
-            const bodyData = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`;
+  <!-- Swagger UI JS (proper tags) -->
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"></script>
 
-            const res = await fetch('/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: bodyData
-            });
-            const data = await res.json();
-            if (data.access_token) {
-                window.localStorage.setItem('swagger_access_token', data.access_token);
-                alert('Authorized! Token stored.');
-            } else {
-                alert('Login failed');
-            }
-        };
+  <script>
+    // --- Token store helpers ---
+    const TOKEN_KEY = 'bugzy_access_token';
+    const setToken = (tok) => { try { localStorage.setItem(TOKEN_KEY, tok || ''); } catch(e){} };
+    const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch(e){ return ''; } };
+    const isLoggedIn = () => !!getToken();
+    function updateStatus(ok, msg) {
+      const el = document.getElementById('loginStatus');
+      el.innerHTML = ok ? `<span class="ok">Logged in</span>${msg ? ' — ' + msg : ''}` :
+                          `<span class="fail">Not logged in</span>${msg ? ' — ' + msg : ''}`;
+    }
 
-        // Initialize Swagger UI
-        const ui = SwaggerUIBundle({
-            url: '/openapi.json',
-            dom_id: '#swagger-ui',
-            presets: [SwaggerUIBundle.presets.apis],
-            layout: 'BaseLayout',
-            requestInterceptor: (req) => {
-                const token = window.localStorage.getItem('swagger_access_token');
-                if (token) {
-                    req.headers['Authorization'] = `Bearer ${token}`;
-                }
-                return req;
-            }
+    // --- Initialize Swagger UI against your OpenAPI ---
+    const ui = SwaggerUIBundle({
+      url: '/openapi.json',               // FastAPI's schema endpoint
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+      layout: "StandaloneLayout",
+      requestInterceptor: (req) => {
+        const tok = getToken();
+        if (tok) {
+          req.headers = req.headers || {};
+          req.headers['Authorization'] = `Bearer ${tok}`;
+        }
+        return req;
+      },
+    });
+
+    // === Relocate overview block below the Swagger title & set up toggle ===
+    (function () {
+      function moveOverview() {
+        const overview = document.getElementById('apiOverview');
+        const titleAnchor = document.querySelector('.information-container.wrapper .info .main');
+        if (!overview || !titleAnchor) return false;
+        titleAnchor.insertAdjacentElement('afterend', overview);
+        return true;
+      }
+      if (!moveOverview()) {
+        const check = setInterval(() => { if (moveOverview()) clearInterval(check); }, 100);
+        setTimeout(() => clearInterval(check), 8000);
+      }
+      const desc = document.getElementById('overviewDesc');
+      const btn = document.getElementById('toggleOverview');
+      if (desc && btn) {
+        btn.addEventListener('click', () => {
+          const expanded = desc.classList.toggle('expanded');
+          btn.textContent = expanded ? 'Show less' : 'Show more';
+          btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         });
-    </script>
+      }
+    })();
+
+    // --- Login logic (Password Flow -> POST /token) ---
+    async function login() {
+      const email = document.getElementById('email').value.trim().toLowerCase();
+      const pw = document.getElementById('password').value;
+      if (!email || !pw) { updateStatus(false, 'Provide email and password'); return; }
+
+      try {
+        const form = new URLSearchParams({ username: email, password: pw, grant_type: 'password' });
+        const r = await fetch('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: form.toString(),
+        });
+
+        let payload = null;
+        try { payload = await r.json(); } catch (_) { /* non-JSON error body */ }
+
+        if (!r.ok) {
+          const msg = payload?.message || payload?.detail || payload?.code || `HTTP ${r.status}`;
+          setToken('');
+          updateStatus(false, msg);
+          return;
+        }
+
+        const tok = payload?.access_token || '';
+        if (!tok) {
+          setToken('');
+          updateStatus(false, 'No access_token in response');
+          return;
+        }
+
+        setToken(tok);
+        updateStatus(true, 'Token stored');
+      } catch (e) {
+        setToken('');
+        updateStatus(false, 'Login error: ' + e);
+      }
+    }
+
+    function logout() {
+      setToken('');
+      updateStatus(false, 'Logged out');
+    }
+
+    document.getElementById('btnLogin').addEventListener('click', login);
+    document.getElementById('btnLogout').addEventListener('click', logout);
+
+    // Initial status
+    updateStatus(isLoggedIn(), isLoggedIn() ? 'Token loaded from storage' : '');
+  </script>
 </body>
 </html>

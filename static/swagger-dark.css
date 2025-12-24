@@ -1,61 +1,326 @@
+
 @import url('https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css');
 
-/* Dark theme variables */
+/* === Bugzy Dark Theme Base === */
 :root {
-color-scheme: dark;
---bg:#0d1117;
---text:#ffffff;
---muted:#d1d5db;
---panel:#0f172a;
---panel-2:#111827;
---border:#4b5563;
---code:#0b1220;
---link:#93c5fd;
---get:#3b82f6;
---post:#22c55e;
---put:#f59e0b;
---delete:#ef4444;
---patch:#a855f7;
+  color-scheme: dark;
+  --bg:#0d1117;
+  --text:#ffffff;
+  --muted:#d1d5db;
+  --panel:#0f172a;
+  --panel-2:#111827;
+  --border:#4b5563;
+  --code:#0b1220;
+  --link:#93c5fd;
+  --get:#3b82f6;
+  --post:#22c55e;
+  --put:#f59e0b;
+  --delete:#ef4444;
+  --patch:#a855f7;
 }
-/* Force all text to white for readability */
-.swagger-ui, .swagger-ui * {
-color: #ffffff !important;
-text-shadow: none !important;
-}
-/* Additional styling omitted for brevity (full CSS from user upload) */
 
+/* Global text color for readability */
+.swagger-ui, .swagger-ui * { color: #ffffff !important; text-shadow: none !important; }
 
-/* Remove white strip and make it dark */
+/* Panels dark */
 .swagger-ui .topbar,
 .swagger-ui .auth-wrapper,
 .swagger-ui .scheme-container,
 .swagger-ui .servers-wrapper,
 .swagger-ui .wrapper,
-.swagger-ui section.servers {
-    background: #0d1117 !important; /* Same dark color */
-    border: 0 !important;
-    box-shadow: none !important;
+.swagger-ui section.servers { background: #0d1117 !important; border: 0 !important; box-shadow: none !important; }
+
+/* Inputs dark */
+.swagger-ui input, .swagger-ui textarea, .swagger-ui select { background-color: #1e293b !important; color: #ffffff !important; border: 1px solid #4b5563 !important; }
+
+/* Cancel button */
+.swagger-ui .btn.cancel { background-color: #374151 !important; color: #ffffff !important; border: 1px solid #4b5563 !important; }
+
+/* Summary icons visible */
+.swagger-ui .opblock-summary-control svg { fill: #ffffff !important; stroke: #ffffff !important; opacity: 1 !important; }
+
+/* === Bugzy: Top-right logo in topbar === */
+.swagger-ui .topbar .topbar-wrapper { position: relative !important; min-height: 64px !important; }
+.swagger-ui .topbar .topbar-wrapper::after {
+  content: "" !important; position: absolute !important; right: 16px !important; top: 50% !important; transform: translateY(-50%);
+  width: 64px !important; height: 64px !important; background: url('/static/img/Bugzy.png') no-repeat center center !important; background-size: contain !important;
+  border-radius: 6px !important; box-shadow: 0 0 0 1px #30363d, 0 2px 6px rgba(0,0,0,.35) !important;
 }
 
-/* Make parameter input boxes dark */
-.swagger-ui input,
-.swagger-ui textarea,
-.swagger-ui select {
-    background-color: #1e293b !important; /* Dark gray */
-    color: #ffffff !important;
-    border: 1px solid #4b5563 !important;
+/* Hide default wordmark pieces in topbar (if present) */
+.swagger-ui .topbar .topbar-wrapper .link span,
+.swagger-ui .topbar .topbar-wrapper a.link span,
+.swagger-ui .topbar .topbar-wrapper .link svg,
+.swagger-ui .topbar .topbar-wrapper a.link svg,
+.swagger-ui .topbar .topbar-wrapper .link img,
+.swagger-ui .topbar .topbar-wrapper a.link img { display: none !important; font-size: 0 !important; color: transparent !important; }
+
+/* === Bugzy: Bigger header logo under the title === */
+/* Hide any default children in the header anchor */
+.swagger-ui .information-container.wrapper .info .main a.link span,
+.swagger-ui .information-container.wrapper .info .main a.link svg,
+.swagger-ui .information-container.wrapper .info .main a.link img { display: none !important; font-size: 0 !important; color: transparent !important; }
+
+/* Enlarge the brand area under the title */
+.swagger-ui .information-container.wrapper .info .main a.link {
+  position: relative !important; display: inline-block !important;
+  width: 400px !important;   /* wider horizontally */
+  height: 76px !important;   /* taller for presence */
+  margin: 8px 16px 12px 0 !important; padding: 0 !important; background: none !important; overflow: visible !important;
 }
 
-/* Cancel button styling */
-.swagger-ui .btn.cancel {
-    background-color: #374151 !important;
-    color: #ffffff !important;
-    border: 1px solid #4b5563 !important;
+/* Fill the box with your PNG while preserving aspect ratio */
+.swagger-ui .information-container.wrapper .info .main a.link::before {
+  content: "" !important; position: absolute !important; inset: 0 !important;
+  background: url('/static/img/Bugzy.png') no-repeat left center !important;
+  background-size: auto 100% !important;   /* fit height exactly */
+  image-rendering: -webkit-optimize-contrast;
 }
 
+/* Optional: description readability tweak */
+.swagger-ui .info .description, .swagger-ui .info p, .swagger-ui .markdown p { font-size: 14px !important; line-height: 1.5 !important; color: #cfd8dc !important; margin-top: 8px !important; }
+
+
+/* Disable clicks on Swagger’s default brand anchors OPENAPI.JASON link */
+.swagger-ui .information-container.wrapper .info .main a.link,
+.swagger-ui .topbar .topbar-wrapper a.link,
+.swagger-ui .topbar .top.swagger-ui .topbar .topbar-wrapper .link {
+  pointer-events: none !important;
+  cursor: default !important;
+  text-decoration: none !important;
+}
+
+/* Make details/summary look nicer in Swagger UI */
+.swagger-ui .info .description details > summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+  color: #fff;
+}
+.swagger-ui .info .description details > summary::-webkit-details-marker { display: none; }
+.swagger-ui .info .description details > summary::after {
+  content: " ▸";
+  color: #93c5fd;
+}
+.swagger-ui .info .description details[open] > summary::after {
+  content: " ▾";
+}
+
+/* Bugzy: Hide the built-in long description block under the title on /docs-custom */
+.swagger-ui .information-container.wrapper .info .description {
+  display: none !important;
+}
+
+/* === Bugzy: Bigger header logo under the title === */
+/* Hide the anchor entirely to remove the big logo */
+.swagger-ui .information-container.wrapper .info .main a.link {
+  display: none !important;
+}
+
+/* Also neutralize any image-injection pseudo element */
+.swagger-ui .information-container.wrapper .info .main a.link::before {
+  content: none !important;
+}
+
+/* Bugzy: Hide the big header brand under the title (keep only top-right logo) */
+.swagger-ui .information-container.wrapper .info .main a.link {
+  display: none !important;
+}
+.swagger-ui .information-container.wrapper .info .main a.link::before {
+  content: none !important;
+}
+
+/* Bugzy: Hide built-in long description block (we use our teaser instead) */
+.swagger-ui .information-container.wrapper .info .description {
+  display: none !important;
+}
+
+/* Bugzy: Hide Authorize button and Explore URL input */
+.swagger-ui .auth-wrapper,
+.swagger-ui .btn.authorize { display: none !important; }
+.swagger-ui .topbar .download-url-wrapper { display: none !important; }
+
+
+/* --- Bugzy: Restore the large header logo under the title (docs-custom only) --- */
+
+/* Re-enable the anchor under the title so we can paint the logo box */
+#docs-custom.swagger-ui .information-container.wrapper .info .main a.link {
+  display: inline-block !important;
+  position: relative !important;
+  width: 280px !important;     /* tweak width to your taste (e.g., 280–420px) */
+  height: 72px !important;     /* matches your original look */
+  margin: 8px 16px 12px 0 !important;
+  padding: 0 !important;
+  background: none !important;
+  overflow: visible !important;
+  pointer-events: none !important;   /* non-clickable brand */
+}
+
+/* Paint the actual image into the anchor box */
+#docs-custom.swagger-ui .information-container.wrapper .info .main a.link::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: url('/static/img/Bugzy.png') no-repeat left center !important;
+  background-size: auto 100% !important;  /* fit height exactly, preserve aspect */
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* Hide any default text/svg children Swagger may inject into that anchor */
+#docs-custom.swagger-ui .information-container.wrapper .info .main a.link span,
+#docs-custom.swagger-ui .information-container.wrapper .info .main a.link svg,
+#docs-custom.swagger-ui .information-container.wrapper .info .main a.link img {
+  display: none !important;
+}
+
+/* Bugzy: remove the small top-right logo in the topbar on /docs-custom */
+.swagger-ui .topbar .topbar-wrapper::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+/* ==== Bugzy: remove extra top spacing under the login strip on /docs-custom ==== */
+/* Scope to /docs-custom so /docs-dark remains unchanged */
+#docs-custom.swagger-ui .information-container.wrapper {
+  margin-top: 0 !important;     /* kill default top margin */
+  padding-top: 0 !important;    /* kill default top padding */
+}
+
+/* Swagger sometimes wraps title inside .info; normalize its top spacing */
+#docs-custom.swagger-ui .information-container.wrapper .info {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Our teaser block: trim the top margin to sit close to the title */
+#docs-custom.swagger-ui .api-overview {
+  margin-top: 6px !important;   /* reduce from 16px → 6px; set 0px if you want it flush */
+}
+
+/* Optional: collapse any extra vertical space introduced by topbar */
+#docs-custom.swagger-ui .topbar {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+  border-bottom: none !important;
+}
+
+/* If there’s a thin separator line between sections, remove its top padding */
+#docs-custom.swagger-ui .wrapper {
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+}
+
+/* ==== Bugzy: collapse extra vertical space above the operations on /docs-custom ==== */
+
+/* Scope everything to /docs-custom so /docs-dark keeps its defaults */
+#docs-custom.swagger-ui .information-container.wrapper {
+  margin-bottom: 0 !important;   /* remove big gap after the info header */
+  padding-bottom: 0 !important;
+}
+
+/* The inner .info container sometimes adds extra space below the description area */
+#docs-custom.swagger-ui .information-container.wrapper .info {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* Our teaser block already has a small top margin; trim its bottom too */
+#docs-custom.swagger-ui .api-overview {
+  margin-top: 6px !important;    /* keep this small top spacing (set 0 if you want flush) */
+  margin-bottom: 6px !important; /* reduce gap before first section */
+}
+
+/* The section wrapper that precedes the operations list */
+#docs-custom.swagger-ui section {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Swagger’s .wrapper adds a large spacing before the first opblock; reduce it */
+#docs-custom.swagger-ui .wrapper {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* The “Operations” container area just under the info header */
+#docs-custom.swagger-ui .opblock-tag-section {
+  margin-top: 6px !important;
+  padding-top: 0 !important;
+}
+
+/* Each operation block spacing (keep compact but readable) */
+#docs-custom.swagger-ui .opblock {
+  margin-top: 8px !important;
+}
+
+/* When a tag group is collapsed/expanded, trim its header bottom spacing */
+#docs-custom.swagger-ui .opblock-tag {
+  margin-bottom: 6px !important;
+}
+
+/* Parameters box inside operations sometimes adds extra top padding */
+#docs-custom.swagger-ui .opblock .opblock-section {
+  padding-top: 6px !important;
+  margin-top: 0 !important;
+}
+
+/* ==== Bugzy: Make drill-down arrows and padlock icons white ==== */
+
+/* Arrow icons in each endpoint summary */
 .swagger-ui .opblock-summary-control svg {
-    fill: #ffffff !important;
-    stroke: #ffffff !important;
-    opacity: 1 !important;
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Padlock icons (lock for secured endpoints) */
+.swagger-ui .authorization__btn svg,
+.swagger-ui .authorization__btn svg path {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+/* ==== Bugzy: Make all "Try it out" button text black ==== */
+.swagger-ui .btn.try-out__btn {
+  color: #000000 !important;   /* force black font color */
+  font-weight: 600;            /* optional: make it bold for clarity */
+}
+
+.swagger-ui .btn.cancel {
+  color: #ffffff !important;
+}
+
+/* Center the Show More button */
+#docs-custom.swagger-ui .api-overview .toggle-btn {
+  display: block;           /* make it a block-level element */
+  margin: 10px auto;        /* auto left/right centers it */
+  text-align: center;       /* ensure text stays centered */
+}
+
+/* --- Bugzy: White-bar section headers — make label text black --- */
+.swagger-ui .opblock .opblock-section-header h4,
+.swagger-ui .opblock .opblock-section-header label,
+.swagger-ui .opblock .opblock-section-header .tab-header,
+.swagger-ui section.servers .opblock-section-header h4,
+.swagger-ui .parameters-wrapper .opblock-section-header h4,
+.swagger-ui .responses-wrapper .opblock-section-header h4 {
+  color: #000 !important;
+}
+
+/* Optional: keep the bar itself light for contrast, with subtle border */
+.swagger-ui .opblock .opblock-section-header {
+  background-color: #fff !important;     /* or #f3f3f3 for softer */
+  border-color: #d9d9d9 !important;
+}
+
+/* If any header is rendered as a <span> rather than <h4>, catch it too */
+.swagger-ui .opblock .opblock-section-header h4,
+.swagger-ui .opblock .opblock-section-header span {
+  color: #000 !important;
 }
 
