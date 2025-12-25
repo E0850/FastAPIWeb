@@ -27,4 +27,7 @@ pydantic-core>=2,<3
 # SlowAPI
 slowapi>=0.1.9
 
+# Requirements.txt  (keep your current lines)
+argon2-cffi==23.1.0
+
 
