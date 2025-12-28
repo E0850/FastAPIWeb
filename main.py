@@ -18,6 +18,7 @@ What this version adds:
 Run locally:
  uvicorn main:app --reload --port 8000 
 """
+import httpx
 import os 
 import time 
 import logging 
@@ -1701,6 +1702,220 @@ def healthz(session: Session = Depends(get_session)):
     except Exception as e: 
         return JSONResponse(status_code=503, content={"status": "degraded", "error": str(e)}) 
 
+
+# ============================ Okta OIDC (PKCE + JWKS) ==========================
+import json, secrets, base64, hashlib
+from typing import Optional, Dict
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, String, BigInteger
+from sqlalchemy import create_engine as create_engine_okta
+from sqlalchemy.orm import sessionmaker as sessionmaker_okta
+from jose import jwt  # python-jose
+
+OKTA_ISSUER = os.getenv("OKTA_ISSUER")
+OKTA_METADATA_URL = os.getenv("OKTA_METADATA_URL")
+OKTA_CLIENT_ID = os.getenv("OKTA_CLIENT_ID")
+OKTA_CLIENT_SECRET = os.getenv("OKTA_CLIENT_SECRET")
+OKTA_REDIRECT_URI = os.getenv("OKTA_REDIRECT_URI")
+OKTA_DEFAULT_SCOPES = os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email offline_access")
+
+if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_CLIENT_SECRET, OKTA_REDIRECT_URI]):
+    logging.warning("Okta env incomplete; /authorize and /callback will fail.")
+
+okta_router = APIRouter(tags=["Okta"])
+
+# --- PKCE state store (SQLite) ---
+PKCE_DB_URL = os.getenv("PKCE_DB_URL", "sqlite:///./pkce_state.db")
+STATE_TTL_SEC = int(os.getenv("PKCE_STATE_TTL_SEC", "600"))  # 10 minutes
+
+BasePKCE = declarative_base()
+engine_pkce = create_engine_okta(PKCE_DB_URL, connect_args={"check_same_thread": False})
+SessionPKCE = sessionmaker_okta(bind=engine_pkce, autocommit=False, autoflush=False)
+
+class PKCEState(BasePKCE):
+    __tablename__ = "pkce_state"
+    state = Column(String, primary_key=True, index=True)
+    code_verifier = Column(String, nullable=False)
+    nonce = Column(String, nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+
+BasePKCE.metadata.create_all(bind=engine_pkce)
+
+def save_pkce_state(state: str, code_verifier: str, nonce: str):
+    now = int(time.time())
+    with SessionPKCE() as db:
+        db.add(PKCEState(state=state, code_verifier=code_verifier, nonce=nonce, created_at=now))
+        db.commit()
+
+def pop_pkce_state(state: str) -> Optional[Dict[str, str]]:
+    with SessionPKCE() as db:
+        rec = db.get(PKCEState, state)
+        if not rec:
+            return None
+        if int(time.time()) - rec.created_at > STATE_TTL_SEC:
+            db.delete(rec); db.commit()
+            return None
+        out = {"code_verifier": rec.code_verifier, "nonce": rec.nonce}
+        db.delete(rec); db.commit()  # one-time use
+        return out
+
+# --- OIDC metadata & JWKS cache ---
+_oidc_meta: Optional[Dict] = None
+_jwks: Optional[Dict] = None
+_jwks_exp = 0
+
+async def get_oidc_metadata() -> Dict:
+    global _oidc_meta
+    if _oidc_meta:
+        return _oidc_meta
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(OKTA_METADATA_URL)
+        r.raise_for_status()
+        _oidc_meta = r.json()
+        return _oidc_meta
+
+async def get_jwks() -> Dict:
+    global _jwks, _jwks_exp
+    now = int(time.time())
+    if _jwks and now < _jwks_exp:
+        return _jwks
+    meta = await get_oidc_metadata()
+    jwks_uri = meta.get("jwks_uri")
+    if not jwks_uri:
+        raise HTTPException(status_code=500, detail="jwks_uri missing in metadata")
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(jwks_uri)
+        r.raise_for_status()
+        _jwks = r.json()
+        _jwks_exp = now + 600  # 10 min cache
+        return _jwks
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+def _sha256_b64(s: str) -> str:
+    return _b64url(hashlib.sha256(s.encode("ascii")).digest())
+
+def _build_authz_url(auth_endpoint: str, state: str, code_challenge: str, nonce: str) -> str:
+    from urllib.parse import urlencode
+    params = {
+        "client_id": OKTA_CLIENT_ID,
+        "response_type": "code",
+        "scope": OKTA_DEFAULT_SCOPES,
+        "redirect_uri": OKTA_REDIRECT_URI,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "nonce": nonce,
+    }
+    return f"{auth_endpoint}?{urlencode(params)}"
+
+def _select_jwk_by_kid(jwks: Dict, kid: str) -> Optional[Dict]:
+    for k in jwks.get("keys", []):
+        if k.get("kid") == kid and k.get("kty") == "RSA":
+            return k
+    return None
+
+@okta_router.get("/authorize")
+async def okta_authorize():
+    meta = await get_oidc_metadata()
+    auth_endpoint = meta.get("authorization_endpoint")
+    if not auth_endpoint:
+        raise HTTPException(status_code=500, detail="authorization_endpoint missing")
+    # PKCE + nonce + state
+    code_verifier = secrets.token_urlsafe(64)
+    code_challenge = _sha256_b64(code_verifier)
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    save_pkce_state(state, code_verifier, nonce)
+    return RedirectResponse(_build_authz_url(auth_endpoint, state, code_challenge, nonce))
+
+@okta_router.get("/callback")
+async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code/state")
+    rec = pop_pkce_state(state)
+    if not rec:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+    code_verifier = rec["code_verifier"]
+    expected_nonce = rec["nonce"]
+
+    meta = await get_oidc_metadata()
+    token_endpoint = meta.get("token_endpoint")
+    if not token_endpoint:
+        raise HTTPException(status_code=500, detail="token_endpoint missing")
+
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": OKTA_REDIRECT_URI,
+        "client_id": OKTA_CLIENT_ID,
+        "code_verifier": code_verifier,
+        "client_secret": OKTA_CLIENT_SECRET,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(token_endpoint, data=data)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Token exchange failed: {resp.text}")
+        tokens = resp.json()
+
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=400, detail="ID token missing")
+
+    # Verify ID token via JWKS (RS256, iss, aud, exp, nonce)
+    jwks = await get_jwks()
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    alg = header.get("alg")
+    if alg != "RS256":
+        raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
+    jwk = _select_jwk_by_kid(jwks, kid)
+    if not jwk:
+        raise HTTPException(status_code=400, detail="Matching JWK not found for kid")
+
+    try:
+        claims = jwt.decode(
+            id_token,
+            jwk,  # python-jose accepts JWK dict
+            algorithms=["RS256"],
+            audience=OKTA_CLIENT_ID,
+            issuer=OKTA_ISSUER,
+            options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
+
+    if claims.get("nonce") != expected_nonce:
+        raise HTTPException(status_code=400, detail="Nonce mismatch")
+
+    # Success: return tokens + claims
+    return JSONResponse({
+        "ok": True,
+        "provider": "okta",
+        "id_token_claims": claims,
+        "access_token": tokens.get("access_token"),
+        "refresh_token": tokens.get("refresh_token"),
+        "token_type": tokens.get("token_type"),
+        "expires_in": tokens.get("expires_in"),
+    })
+
+@okta_router.get("/authz/ready", include_in_schema=False)
+async def okta_authz_ready():
+    issues = []
+    for k, v in [("OKTA_ISSUER", OKTA_ISSUER), ("OKTA_METADATA_URL", OKTA_METADATA_URL), ("OKTA_CLIENT_ID", OKTA_CLIENT_ID), ("OKTA_CLIENT_SECRET", "***" if OKTA_CLIENT_SECRET else None), ("OKTA_REDIRECT_URI", OKTA_REDIRECT_URI)]:
+        if not v:
+            issues.append(f"Missing {k}")
+    try:
+        meta = await get_oidc_metadata()
+        for f in ["authorization_endpoint", "token_endpoint", "jwks_uri"]:
+            if not meta.get(f):
+                issues.append(f"Metadata missing {f}")
+    except Exception as e:
+        issues.append(f"Metadata error: {str(e)}")
+    return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)
+
 # ============================ Mount Routers ================================== 
 require_client_auth = os.getenv("REQUIRE_CLIENT_AUTH", "true").lower() == "true" 
 protected = [Depends(get_current_user), Depends(set_rate_limit_identity)] if require_client_auth else [] 
@@ -1709,7 +1924,8 @@ app.include_router(customers_router, dependencies=protected)
 app.include_router(invoices_router, dependencies=protected) 
 app.include_router(agreements_router, dependencies=protected) 
 app.include_router(users_router, dependencies=protected) 
-app.include_router(auth_router) 
+app.include_router(auth_router)
+app.include_router(okta_router) 
 
 @app.get("/docs-custom", include_in_schema=False) 
 def custom_docs(): 
