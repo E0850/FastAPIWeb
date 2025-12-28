@@ -1,36 +1,33 @@
+
 # FastAPI (Pydantic v2 compatible)
 fastapi>=0.103,<1.0
 
 # ASGI server
 uvicorn[standard]>=0.23
 
-# SQLAlchemy 2.x line (your code uses new-style APIs)
+# SQLAlchemy 2.x line
 SQLAlchemy>=2.0
 
-# PostgreSQL driver (choose ONE; psycopg2-binary is easiest)
+# PostgreSQL driver
 psycopg2-binary>=2.9
 
-# Auth & crypto
+# Auth & crypto (python-jose RS256 + passlib/bcrypt/argon2)
 python-jose[cryptography]==3.3.0
 passlib==1.7.4
 bcrypt==4.0.1
+argon2-cffi==23.1.0
 cryptography>=41,<44
 
 # Forms & env
 python-multipart>=0.0.9
 python-dotenv>=1.0
 
-# Pydantic v2 (+ core) to match your code using model_dump()
+# Pydantic v2 (+ core) to match model_dump()
 pydantic[email]>=2,<3
 pydantic-core>=2,<3
 
-# SlowAPI
+# Rate limiting
 slowapi>=0.1.9
-
-# Requirements.txt  (keep your current lines)
-argon2-cffi==23.1.0
 
 # HTTP client for Okta discovery/JWKS/token exchange
 httpx>=0.25,<0.28
-
-
