@@ -563,6 +563,15 @@ class Token(BaseModel):
 class TokenData(BaseModel): 
     email: Optional[str] = None 
 
+
+
+@app.get("/_debug/routes", include_in_schema=False)
+def list_routes():
+    return [
+        {"path": r.path, "name": r.name, "methods": list(r.methods or [])}
+        for r in app.router.routes
+    ]
+
 # ------------------------------- Swagger UI (dark) ------------------------------- 
 @app.get("/docs-dark", include_in_schema=False) 
 def docs_dark(): 
