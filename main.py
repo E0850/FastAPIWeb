@@ -1849,11 +1849,15 @@ async def okta_authorize():
     nonce = secrets.token_urlsafe(24)
     save_pkce_state(state, code_verifier, nonce)
 
-    # BUILD the URL, then log it
+    # Build the URL
     url = _build_authz_url(auth_endpoint, state, code_challenge, nonce)
-    logging.info("Okta /authorize → %s", url)
 
-    return RedirectResponse(url)
+    # Guard: if anything upstream encoded '&' as '&amp;', normalize back
+    if "&amp;" in url:
+        url = url.replace("&amp;", "&")
+
+    logging.info("Okta /authorize → %s", url)
+    return RedirectResponse(url, status_code=302)  # 302 is fine; 307 works too
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -1963,5 +1967,6 @@ def custom_docs():
 if __name__ == "__main__": 
     import uvicorn 
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
