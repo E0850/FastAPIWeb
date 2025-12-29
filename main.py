@@ -126,7 +126,13 @@ app = FastAPI(
     ),
 )
 
-limiter = Limiter(key_func=lambda request: (getattr(request.state, "user_email", None) or get_remote_address(request)))
+def rate_limit_key(request: Request):
+    try:
+        return get_remote_address(request)
+    except Exception:
+        return "anonymous"
+
+limiter = Limiter(key_func=rate_limit_key)
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
