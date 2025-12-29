@@ -239,7 +239,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
-
+ 
 # ============================ Database (PostgreSQL) ==========================
 DATABASE_URL = os.getenv("DB_URL", "").strip()
 if not DATABASE_URL:
@@ -340,6 +340,12 @@ class Agreement(Base):
     Price_list: Mapped[str] = mapped_column(String(6), nullable=True)
     Reason_code_terminated_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
     Project_number: Mapped[str] = mapped_column(String(6), nullable=True)
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    refresh_token: Optional[str] = None
+    expires_in: int
 
 # ============================ Session dependency =============================
 def get_session() -> Iterator[Session]:
