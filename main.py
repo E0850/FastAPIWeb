@@ -1835,6 +1835,7 @@ def _select_jwk_by_kid(jwks: Dict, kid: str) -> Optional[Dict]:
             return k
     return None
 
+
 @okta_router.get("/authorize")
 async def okta_authorize():
     meta = await get_oidc_metadata()
@@ -1842,22 +1843,20 @@ async def okta_authorize():
     if not auth_endpoint:
         raise HTTPException(status_code=500, detail="authorization_endpoint missing")
 
-    # PKCE + nonce + state
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _sha256_b64(code_verifier)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     save_pkce_state(state, code_verifier, nonce)
 
-    # Build the URL
     url = _build_authz_url(auth_endpoint, state, code_challenge, nonce)
 
-    # Guard: if anything upstream encoded '&' as '&amp;', normalize back
+    # Normalize in case any upstream layer HTML-encoded '&'
     if "&amp;" in url:
         url = url.replace("&amp;", "&")
 
     logging.info("Okta /authorize → %s", url)
-    return RedirectResponse(url, status_code=302)  # 302 is fine; 307 works too
+    return RedirectResponse(url, status_code=302)
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -1967,6 +1966,7 @@ def custom_docs():
 if __name__ == "__main__": 
     import uvicorn 
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
