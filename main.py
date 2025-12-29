@@ -1749,7 +1749,6 @@ STATE_TTL_SEC = int(os.getenv("PKCE_STATE_TTL_SEC", "600"))  # 10 minutes
 
 BasePKCE = declarative_base()
 engine_pkce = create_engine_okta(PKCE_DB_URL, connect_args={"check_same_thread": False})
-BasePKCE.metadata.create_all(bind=engine_pkce)
 SessionPKCE = sessionmaker_okta(bind=engine_pkce, autocommit=False, autoflush=False)
 
 class PKCEState(BasePKCE):
@@ -1837,31 +1836,27 @@ def _select_jwk_by_kid(jwks: Dict, kid: str) -> Optional[Dict]:
     return None
 
 
-
 @okta_router.get("/authorize")
 async def okta_authorize():
-    try:
-        meta = await get_oidc_metadata()
-        auth_endpoint = meta.get("authorization_endpoint")
-        if not auth_endpoint:
-            logging.error("Okta metadata missing authorization_endpoint")
-            raise HTTPException(status_code=500, detail="authorization_endpoint missing")
+    meta = await get_oidc_metadata()
+    auth_endpoint = meta.get("authorization_endpoint")
+    if not auth_endpoint:
+        raise HTTPException(status_code=500, detail="authorization_endpoint missing")
 
-        code_verifier = secrets.token_urlsafe(64)
-        code_challenge = _sha256_b64(code_verifier)
-        state = secrets.token_urlsafe(24)
-        nonce = secrets.token_urlsafe(24)
+    code_verifier = secrets.token_urlsafe(64)
+    code_challenge = _sha256_b64(code_verifier)
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    save_pkce_state(state, code_verifier, nonce)
 
-        logging.info("PKCE pre-save: state=%s, nonce=%s", state, nonce)
-        save_pkce_state(state, code_verifier, nonce)
-        logging.info("PKCE saved OK")
+    url = _build_authz_url(auth_endpoint, state, code_challenge, nonce)
 
-        url = _build_authz_url(auth_endpoint, state, code_challenge, nonce)
-        logging.info("Okta /authorize → %s", url)
-        return RedirectResponse(url, status_code=302)
-    except Exception as ex:
-        logging.exception("Authorize failed: %s", ex)
-        raise HTTPException(status_code=400, detail=str(ex))
+    # Normalize in case any upstream layer HTML-encoded '&'
+    if "&amp;" in url:
+        url = url.replace("&amp;", "&")
+
+    logging.info("Okta /authorize → %s", url)
+    return RedirectResponse(url, status_code=302)
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -1966,4 +1961,12 @@ def custom_docs():
         return HTMLResponse(content="<h1>swagger-custom.html not found in static folder</h1>", status_code=404) 
     html_content = file_path.read_text(encoding="utf-8") 
     return HTMLResponse(content=html_content) 
+
+# ================================ Entrypoint ================================= 
+if __name__ == "__main__": 
+    import uvicorn 
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+
 
