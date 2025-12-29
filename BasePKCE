@@ -1749,6 +1749,7 @@ STATE_TTL_SEC = int(os.getenv("PKCE_STATE_TTL_SEC", "600"))  # 10 minutes
 
 BasePKCE = declarative_base()
 engine_pkce = create_engine_okta(PKCE_DB_URL, connect_args={"check_same_thread": False})
+BasePKCE.metadata.create_all(bind=engine_pkce)
 SessionPKCE = sessionmaker_okta(bind=engine_pkce, autocommit=False, autoflush=False)
 
 class PKCEState(BasePKCE):
@@ -1970,6 +1971,7 @@ def custom_docs():
 if __name__ == "__main__": 
     import uvicorn 
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 
 
 
