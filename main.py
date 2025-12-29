@@ -782,24 +782,31 @@ async def okta_authorize():
     auth_endpoint = meta.get("authorization_endpoint")
     if not auth_endpoint:
         raise HTTPException(status_code=500, detail="authorization_endpoint missing")
+
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _sha256_b64(code_verifier)
+
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
+
     save_pkce_state(state, code_verifier, nonce)
+
     from urllib.parse import urlencode
+
     params = {
         "client_id": OKTA_CLIENT_ID,
         "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,
+        "scope": OKTA_DEFAULT_SCOPES,  # openid profile email ONLY
         "redirect_uri": OKTA_REDIRECT_URI,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
     }
-    url = f"{auth_endpoint}?{urlencode(params)}".replace("&amp;", "&")
-    logging.info("Okta /authorize → %s", url)
+
+    url = f"{auth_endpoint}?{urlencode(params)}"
+    logging.info("Okta authorize URL: %s", url)
+
     return RedirectResponse(url, status_code=302)
 
 @okta_router.get("/callback")
