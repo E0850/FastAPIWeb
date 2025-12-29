@@ -1841,14 +1841,19 @@ async def okta_authorize():
     auth_endpoint = meta.get("authorization_endpoint")
     if not auth_endpoint:
         raise HTTPException(status_code=500, detail="authorization_endpoint missing")
+
     # PKCE + nonce + state
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _sha256_b64(code_verifier)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     save_pkce_state(state, code_verifier, nonce)
+
+    # BUILD the URL, then log it
+    url = _build_authz_url(auth_endpoint, state, code_challenge, nonce)
     logging.info("Okta /authorize → %s", url)
-    return RedirectResponse(_build_authz_url(auth_endpoint, state, code_challenge, nonce))
+
+    return RedirectResponse(url)
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -1958,4 +1963,5 @@ def custom_docs():
 if __name__ == "__main__": 
     import uvicorn 
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 
