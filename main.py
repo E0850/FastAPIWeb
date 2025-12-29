@@ -572,6 +572,13 @@ def list_routes():
         for r in app.router.routes
     ]
 
+@app.get("/authz/debug", include_in_schema=False)
+def authz_debug():
+    return {
+        "OKTA_CLIENT_ID": OKTA_CLIENT_ID,
+        "OKTA_REDIRECT_URI": OKTA_REDIRECT_URI
+    }
+
 # ------------------------------- Swagger UI (dark) ------------------------------- 
 @app.get("/docs-dark", include_in_schema=False) 
 def docs_dark(): 
@@ -1722,12 +1729,14 @@ from sqlalchemy import create_engine as create_engine_okta
 from sqlalchemy.orm import sessionmaker as sessionmaker_okta
 from jose import jwt  # python-jose
 
-OKTA_ISSUER = os.getenv("OKTA_ISSUER")
-OKTA_METADATA_URL = os.getenv("OKTA_METADATA_URL")
-OKTA_CLIENT_ID = os.getenv("OKTA_CLIENT_ID")
-OKTA_CLIENT_SECRET = os.getenv("OKTA_CLIENT_SECRET")
-OKTA_REDIRECT_URI = os.getenv("OKTA_REDIRECT_URI")
-OKTA_DEFAULT_SCOPES = os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email offline_access")
+
+# --- replace these lines in your Okta config block ---
+OKTA_ISSUER = (os.getenv("OKTA_ISSUER") or "").strip()
+OKTA_METADATA_URL = (os.getenv("OKTA_METADATA_URL") or "").strip()
+OKTA_CLIENT_ID = (os.getenv("OKTA_CLIENT_ID") or "").strip()
+OKTA_CLIENT_SECRET = (os.getenv("OKTA_CLIENT_SECRET") or "").strip()
+OKTA_REDIRECT_URI = (os.getenv("OKTA_REDIRECT_URI") or "").strip()
+OKTA_DEFAULT_SCOPES = (os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email offline_access")).strip()
 
 if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_CLIENT_SECRET, OKTA_REDIRECT_URI]):
     logging.warning("Okta env incomplete; /authorize and /callback will fail.")
@@ -1838,6 +1847,7 @@ async def okta_authorize():
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     save_pkce_state(state, code_verifier, nonce)
+    logging.info("Okta /authorize → %s", url)
     return RedirectResponse(_build_authz_url(auth_endpoint, state, code_challenge, nonce))
 
 @okta_router.get("/callback")
@@ -1948,3 +1958,4 @@ def custom_docs():
 if __name__ == "__main__": 
     import uvicorn 
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
