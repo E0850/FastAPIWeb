@@ -982,25 +982,26 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
 
-    jwks = await get_jwks()
-    header = jwt.get_unverified_header(id_token)
-    kid = header.get("kid")
-    alg = header.get("alg")
-    if alg != "RS256":
-        raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
 
-    try:
-        key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
-        claims = jwt.decode(
-            id_token,
-            key,  # python-jose accepts JWK dict directly
-            algorithms=["RS256"],
-            audience=OKTA_CLIENT_ID,
-            issuer=OKTA_ISSUER,
-            options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
+jwks = await get_jwks()
+header = jwt.get_unverified_header(id_token)
+kid = header.get("kid")
+alg = header.get("alg")
+if alg != "RS256":
+    raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
+
+try:
+    key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
+    claims = jwt.decode(
+        id_token,
+        key,  # python-jose accepts JWK dict directly
+        algorithms=["RS256"],
+        audience=OKTA_CLIENT_ID,
+        issuer=OKTA_ISSUER,
+        options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
+    )
+except Exception as e:
+    raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
 
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
