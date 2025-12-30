@@ -255,96 +255,164 @@ engine = create_engine(
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
-# ---------------------- ORM MODELS (SQLAlchemy) ----------------------
-class Order(Base):
-    __tablename__ = "orders"
-    __table_args__ = {"schema": "dbo"}
-    Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    Customer_Number: Mapped[int] = mapped_column(Integer)
-    Quantity: Mapped[int] = mapped_column(Integer)
-    Price: Mapped[int] = mapped_column(Integer)
 
-class Customer(Base):
-    __tablename__ = "customers"
-    __table_args__ = {"schema": "dbo"}
-    Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=True)
-    Customer_Address: Mapped[str] = mapped_column(String(50), nullable=True)
-    Contact_Number: Mapped[str] = mapped_column(String(15), nullable=True)
-    Email_Address: Mapped[str] = mapped_column(String(50), nullable=True)
+# ============================ Schemas (Pydantic) =============================
+class OrderIn(BaseModel):
+    Customer_Number: int
+    Quantity: int
+    Price: int
 
-class User(Base):
-    __tablename__ = "users"
-    __table_args__ = {"schema": "dbo"}
-    User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    User_Name: Mapped[str] = mapped_column(String(100), nullable=True)
-    Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    Email_Address: Mapped[str] = mapped_column(String(255), nullable=True, unique=True)
-    Contact_Number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    Vat_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    Hashed_Pword: Mapped[str] = mapped_column(nullable=True)
-    Is_Active: Mapped[bool] = mapped_column(Boolean, default=True)
-    Role: Mapped[str] = mapped_column(String(50), nullable=True, default="user")
-    TokenVersion: Mapped[int] = mapped_column(Integer, nullable=True, default=1)
+class OrderOut(OrderIn):
+    Order_Number: int
 
-class RefreshToken(Base):
-    __tablename__ = "refresh_tokens"
-    __table_args__ = (
-        UniqueConstraint("Fingerprint", name="uq_refresh_tokens_fingerprint"),
-        {"schema": "dbo"}
+def order_out(o: Order) -> OrderOut:
+    return OrderOut(
+        Order_Number=o.Order_Number,
+        Customer_Number=o.Customer_Number,
+        Quantity=o.Quantity,
+        Price=o.Price,
     )
-    RT_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    User_Id: Mapped[int] = mapped_column(Integer, nullable=False)
-    Token_Hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    Fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    Created_At: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    Expires_At: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    Is_Revoked: Mapped[bool] = mapped_column(Boolean, default=False)
-    TokenVersionAtIssue: Mapped[int] = mapped_column(Integer, nullable=False)
 
-class Invoice(Base):
-    __tablename__ = "invoices"
-    __table_args__ = {"schema": "dbo"}
-    Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    Order_Number: Mapped[int] = mapped_column(Integer)
-    Customer_Number: Mapped[int] = mapped_column(Integer)
-    Invoice_Date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
-    Invoice_Email: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    Amount: Mapped[int] = mapped_column(Integer)
+class CustomerIn(BaseModel):
+    Customer_Name: str
+    Customer_Address: str
+    Contact_Number: str
+    Email_Address: EmailStr
 
-class Agreement(Base):
-    __tablename__ = "agreements"
-    __table_args__ = {"schema": "dbo"}
-    Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True)
-    Customer_Number: Mapped[int] = mapped_column(Integer)
-    Customer_site: Mapped[int] = mapped_column(Integer)
-    Your_reference_1: Mapped[int] = mapped_column(Integer)
-    Telephone_number_1: Mapped[int] = mapped_column(Integer)
-    customers_order_number: Mapped[int] = mapped_column(Integer)
-    Agreement_order_type: Mapped[int] = mapped_column(Integer)
-    Termination_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
-    Line_charge_model: Mapped[int] = mapped_column(Integer)
-    Address_line_1: Mapped[str] = mapped_column(String(100), nullable=True)
-    Address_line_2: Mapped[str] = mapped_column(String(100), nullable=True)
-    Address_line_3: Mapped[str] = mapped_column(String(100), nullable=True)
-    Address_line_4: Mapped[str] = mapped_column(String(100), nullable=True)
-    Salesperson: Mapped[str] = mapped_column(String(30), nullable=True)
-    Minimum_rental_type: Mapped[int] = mapped_column(Integer)
-    Minimum_order_value: Mapped[int] = mapped_column(Integer)
-    Currency: Mapped[str] = mapped_column(String(6), nullable=True, default="SR")
-    Reason_code_created_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
-    User: Mapped[str] = mapped_column(String(6), nullable=True)
-    Minimum_hire_period: Mapped[int] = mapped_column(Integer)
-    Payment_terms: Mapped[str] = mapped_column(String(6), nullable=True)
-    Price_list: Mapped[str] = mapped_column(String(6), nullable=True)
-    Reason_code_terminated_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
-    Project_number: Mapped[str] = mapped_column(String(6), nullable=True)
+class CustomerOut(CustomerIn):
+    Customer_Number: int
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    refresh_token: Optional[str] = None
-    expires_in: int
+def customer_out(c: Customer) -> CustomerOut:
+    return CustomerOut(
+        Customer_Number=c.Customer_Number,
+        Customer_Name=c.Customer_Name,
+        Customer_Address=c.Customer_Address,
+        Contact_Number=c.Contact_Number,
+        Email_Address=c.Email_Address,
+    )
+
+class UserCreate(BaseModel):
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Password: str = Field(..., min_length=6)
+
+class UserPublic(BaseModel):
+    User_Id: int
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Is_Active: bool = True
+    Role: Optional[str] = None
+    TokenVersion: Optional[int] = None
+
+def user_out(u: User) -> UserPublic:
+    return UserPublic(
+        User_Id=u.User_Id,
+        User_Name=u.User_Name,
+        Location_Address=u.Location_Address or "",
+        Email_Address=u.Email_Address,
+        Contact_Number=u.Contact_Number or "",
+        Vat_Number=u.Vat_Number or "",
+        Is_Active=bool(u.Is_Active),
+        Role=u.Role,
+        TokenVersion=u.TokenVersion,
+    )
+
+class UserUpdate(BaseModel):
+    User_Name: Optional[str] = None
+    Location_Address: Optional[str] = None
+    Email_Address: Optional[EmailStr] = None
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Is_Active: Optional[bool] = None
+    Role: Optional[str] = None
+
+class UserPasswordUpdate(BaseModel):
+    Old_Password: str = Field(..., min_length=8)
+    New_Password: str = Field(..., min_length=8)
+
+class InvoiceIn(BaseModel):
+    Order_Number: int
+    Invoice_Date: str
+    Invoice_Email: Optional[str] = None
+    Amount: int
+    Customer_Number: int
+
+class InvoiceOut(InvoiceIn):
+    Invoice_Number: int
+
+def invoice_out(i: Invoice) -> InvoiceOut:
+    return InvoiceOut(
+        Invoice_Number=i.Invoice_Number,
+        Order_Number=i.Order_Number,
+        Invoice_Date=i.Invoice_Date,
+        Invoice_Email=i.Invoice_Email,
+        Amount=i.Amount,
+        Customer_Number=i.Customer_Number,
+    )
+
+class AgreementIn(BaseModel):
+    Agreement_number: str
+    Customer_Number: int
+    Customer_site: int
+    Your_reference_1: int
+    Telephone_number_1: int
+    customers_order_number: int
+    Agreement_order_type: int
+    Termination_date: str
+    Line_charge_model: int
+    Address_line_1: str
+    Address_line_2: str
+    Address_line_3: str
+    Address_line_4: str
+    Salesperson: str
+    Minimum_rental_type: int
+    Minimum_order_value: int
+    Currency: str
+    Reason_code_created_agreement: str
+    User: str
+    Minimum_hire_period: int
+    Payment_terms: str
+    Price_list: str
+    Reason_code_terminated_agreement: str
+    Project_number: str
+
+class AgreementOut(AgreementIn):
+    Agreement_number: str
+
+def agreement_out(a: Agreement) -> AgreementOut:
+    return AgreementOut(
+        Agreement_number=a.Agreement_number,
+        Customer_Number=a.Customer_Number,
+        Customer_site=a.Customer_site,
+        Your_reference_1=a.Your_reference_1,
+        Telephone_number_1=a.Telephone_number_1,
+        customers_order_number=a.customers_order_number,
+        Agreement_order_type=a.Agreement_order_type,
+        Termination_date=a.Termination_date,
+        Line_charge_model=a.Line_charge_model,
+        Address_line_1=a.Address_line_1,
+        Address_line_2=a.Address_line_2,
+        Address_line_3=a.Address_line_3,
+        Address_line_4=a.Address_line_4,
+        Salesperson=a.Salesperson,
+        Minimum_rental_type=a.Minimum_rental_type,
+        Minimum_order_value=a.Minimum_order_value,
+        Currency=a.Currency,
+        Reason_code_created_agreement=a.Reason_code_created_agreement,
+        User=a.User,
+        Minimum_hire_period=a.Minimum_hire_period,
+        Payment_terms=a.Payment_terms,
+        Price_list=a.Price_list,
+        Reason_code_terminated_agreement=a.Reason_code_terminated_agreement,
+        Project_number=a.Project_number,
+    )
+
 
 # ============================ Session dependency =============================
 def get_session() -> Iterator[Session]:
