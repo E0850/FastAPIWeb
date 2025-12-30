@@ -2,7 +2,6 @@
 # SimpleAPI_SQLAlchemy_version.py
 """
 API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
-
 Highlights:
  1) All endpoints are locked by default.
  2) Unlock with a valid Bearer token (your RS256 API token or Okta access token).
@@ -10,9 +9,8 @@ Highlights:
  4) Refresh token rotation + reuse detection.
  5) Okta Authorization Code + PKCE (/authorize → /callback) with optional client_secret.
  6) JWKS published at /.well-known/jwks.json for RS256 verification.
-
 Run locally:
-  uvicorn main:app --reload --port 8000
+ uvicorn main:app --reload --port 8000
 """
 
 import os
@@ -48,7 +46,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-# ---------------------------- Error model & helpers ----------------------------
+# --------------------------- Error model & helpers ----------------------------
 class ErrorDetail(BaseModel):
     code: str
     message: str
@@ -82,7 +80,7 @@ def clear_attempts(username: str, ip: str) -> None:
     if key in _attempts:
         _attempts[key] = []
 
-# ----------------------------- Role → scopes map ------------------------------
+# ------------------------------ Role → scopes map -----------------------------
 ROLE_TO_SCOPES = {
     "admin": [
         "orders:read", "orders:write",
@@ -127,6 +125,7 @@ app = FastAPI(
 )
 
 # Rate limiting
+
 def rate_limit_key(request: Request):
     try:
         return get_remote_address(request)
@@ -352,6 +351,7 @@ class Agreement(Base):
     Project_number: Mapped[str] = mapped_column(String(6), nullable=True)
 
 # ============================ Session dependency ==============================
+
 def get_session() -> Iterator[Session]:
     with Session(engine) as session:
         yield session
@@ -839,7 +839,7 @@ OKTA_DEFAULT_SCOPES = (os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email"))
 OKTA_TOKEN_AUTH_METHOD = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()  # basic|post
 
 if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_REDIRECT_URI]):
-    logging.warning("Okta env incomplete; /authorize and /callback will fail.")  # [1](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).py)
+    logging.warning("Okta env incomplete; /authorize and /callback will fail.")
 
 okta_router = APIRouter(tags=["Okta"])
 
@@ -877,14 +877,17 @@ async def get_jwks() -> _Dict:
         r.raise_for_status()
         return r.json()
 
+
 def _sha256_b64(s: str) -> str:
     return _b64url(hashlib.sha256(s.encode("ascii")).digest())
+
 
 def save_pkce_state(state: str, code_verifier: str, nonce: str):
     now = int(time.time())
     with SessionPKCE() as db:
         db.add(PKCEState(state=state, code_verifier=code_verifier, nonce=nonce, created_at=now))
         db.commit()
+
 
 def pop_pkce_state(state: str) -> Optional[Dict[str, str]]:
     with SessionPKCE() as db:
@@ -897,6 +900,7 @@ def pop_pkce_state(state: str) -> Optional[Dict[str, str]]:
         out = {"code_verifier": rec.code_verifier, "nonce": rec.nonce}
         db.delete(rec); db.commit()
         return out
+
 
 @okta_router.get("/authorize")
 async def okta_authorize():
@@ -982,26 +986,29 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
 
+    # Pass Okta access token to python-jose to validate at_hash (if present)
+    okta_access = tokens.get("access_token")
 
-jwks = await get_jwks()
-header = jwt.get_unverified_header(id_token)
-kid = header.get("kid")
-alg = header.get("alg")
-if alg != "RS256":
-    raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
+    jwks = await get_jwks()
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    alg = header.get("alg")
+    if alg != "RS256":
+        raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
 
-try:
-    key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
-    claims = jwt.decode(
-        id_token,
-        key,  # python-jose accepts JWK dict directly
-        algorithms=["RS256"],
-        audience=OKTA_CLIENT_ID,
-        issuer=OKTA_ISSUER,
-        options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
-    )
-except Exception as e:
-    raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
+    try:
+        key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
+        claims = jwt.decode(
+            id_token,
+            key,  # python-jose accepts JWK dict directly
+            algorithms=["RS256"],
+            audience=OKTA_CLIENT_ID,
+            issuer=OKTA_ISSUER,
+            access_token=okta_access,  # ensure at_hash can be checked
+            options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
 
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
@@ -1034,11 +1041,12 @@ except Exception as e:
         "provider": "okta",
         "id_token_claims": claims,
         "access_token": tokens.get("access_token"),      # Okta access token (optional)
-        "api_access_token": api_access,                  # First-party API token (RS256)
+        "api_access_token": api_access,                    # First-party API token (RS256)
         "refresh_token": tokens.get("refresh_token"),
         "token_type": tokens.get("token_type"),
         "expires_in": tokens.get("expires_in"),
     })
+
 
 @okta_router.get("/authz/ready", include_in_schema=False)
 async def okta_authz_ready():
@@ -1060,6 +1068,7 @@ async def okta_authz_ready():
     except Exception as e:
         issues.append(f"Metadata error: {str(e)}")
     return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)
+
 
 @okta_router.post("/logout")
 async def okta_logout(request: Request):
