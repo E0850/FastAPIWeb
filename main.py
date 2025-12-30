@@ -1090,7 +1090,7 @@ from security_deps import require_auth, require_scopes, Principal
 
 async def _auth_dep(request: Request) -> Principal:
     auth = request.headers.get("Authorization")
-    return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"))
+    return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"), request=request)
 
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
 app.include_router(auth_router)
