@@ -101,11 +101,9 @@ ROLE_TO_SCOPES = {
 
 # ============================ App & Security Config ===========================
 load_dotenv()
-
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 TOKEN_EXPIRES_MIN = int(os.getenv("TOKEN_EXPIRES_MIN", "60"))
-
 REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
@@ -232,16 +230,13 @@ rs256_keystore = RS256KeyStore()
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
 raw_origins = os.getenv("CORS_ORIGINS", "")
 allow_origins: List[str] = [o.strip() for o in raw_origins.split(",") if o.strip()]
 ENV = os.getenv("ENV", "dev").lower()
-
 if ENV == "prod" and not allow_origins:
     raise RuntimeError("CORS_ORIGINS must be set in production (comma-separated list).")
 if ENV != "prod" and not allow_origins:
     allow_origins = ["http://localhost:8000", "http://127.0.0.1:8000"]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
@@ -254,7 +249,6 @@ app.add_middleware(
 DATABASE_URL = os.getenv("DB_URL", "").strip()
 if not DATABASE_URL:
     raise RuntimeError("DB_URL is not set. Put it in .env or environment variables.")
-
 engine = create_engine(
     DATABASE_URL,
     echo=False,
@@ -727,16 +721,13 @@ def refresh_access_token(
     raw = (payload.refresh_token or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Missing refresh_token")
-
     fp = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     rec = session.scalar(select(RefreshToken).where(RefreshToken.Fingerprint == fp))
     if not rec:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-
     user = session.get(User, rec.User_Id)
     if not user or not user.Is_Active:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-
     now = datetime.now(timezone.utc)
     if rec.Is_Revoked or rec.Expires_At <= now:
         user.TokenVersion = (user.TokenVersion or 1) + 1
@@ -744,18 +735,15 @@ def refresh_access_token(
             rt.Is_Revoked = True
         session.commit()
         raise HTTPException(status_code=401, detail="Refresh token reuse detected; tokens revoked")
-
     try:
         if not pwd_context.verify(raw, rec.Token_Hash):
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-
     if int(rec.TokenVersionAtIssue or 1) != int(user.TokenVersion or 1):
         for rt in session.scalars(select(RefreshToken).where(RefreshToken.User_Id == user.User_Id)).all():
             rt.Is_Revoked = True
         raise HTTPException(status_code=401, detail="Refresh token revoked")
-
     rec.Is_Revoked = True
     session.commit()
 
@@ -918,15 +906,14 @@ async def okta_authorize():
     params = {
         "client_id": OKTA_CLIENT_ID,
         "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,  # includes offline_access and custom API scopes
+        "scope": OKTA_DEFAULT_SCOPES,  # add offline_access + custom API scopes if desired
         "redirect_uri": OKTA_REDIRECT_URI,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
-        # Optional audience/resource if required by your AS:
-        # "resource": os.getenv("OKTA_AUDIENCE"),
-        # or "audience": os.getenv("OKTA_AUDIENCE"),
+        # Optional: resource/audience
+        # "audience": os.getenv("OKTA_AUDIENCE"),
     }
     url = f"{auth_endpoint}?{urlencode(params)}"
     logging.info("Okta authorize initiated")
@@ -960,19 +947,19 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if OKTA_CLIENT_SECRET:
         auth_method = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()
         if auth_method == "post":
-            # client_secret_post → put BOTH client_id and client_secret in the body; NO Authorization header
+            # client_secret_post → client_id & client_secret in body; NO Authorization header
             data["client_id"] = OKTA_CLIENT_ID
             data["client_secret"] = OKTA_CLIENT_SECRET
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
         else:
-            # client_secret_basic (default for Web apps) → Authorization: Basic; DO NOT send client_id in the body
+            # client_secret_basic → Authorization: Basic; DO NOT send client_id in body
             basic = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
             headers = {
                 "Authorization": f"Basic {basic}",
                 "Content-Type": "application/x-www-form-urlencoded",
             }
     else:
-        # Public PKCE (no secret) → include client_id in the body; NO Authorization header
+        # Public PKCE (no secret) → include client_id in body; NO Authorization header
         data["client_id"] = OKTA_CLIENT_ID
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -986,7 +973,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
 
-    # Pass Okta access token to python-jose to validate at_hash (if present)
+    # Provide Okta access token to python-jose to validate at_hash (if present)
     okta_access = tokens.get("access_token")
 
     jwks = await get_jwks()
@@ -1004,7 +991,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             algorithms=["RS256"],
             audience=OKTA_CLIENT_ID,
             issuer=OKTA_ISSUER,
-            access_token=okta_access,  # ensure at_hash can be checked
+            access_token=okta_access,  # ensures at_hash check
             options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
         )
     except Exception as e:
@@ -1036,16 +1023,48 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             headers={"kid": kid_active},
         )
 
-    return JSONResponse({
-        "ok": True,
-        "provider": "okta",
-        "id_token_claims": claims,
-        "access_token": tokens.get("access_token"),      # Okta access token (optional)
-        "api_access_token": api_access,                    # First-party API token (RS256)
-        "refresh_token": tokens.get("refresh_token"),
-        "token_type": tokens.get("token_type"),
-        "expires_in": tokens.get("expires_in"),
-    })
+    # --- Redirect to Swagger UI and set cookies ---
+    POST_LOGIN_REDIRECT = os.getenv("POST_LOGIN_REDIRECT", "/docs-dark")
+    COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
+
+    response = RedirectResponse(url=POST_LOGIN_REDIRECT, status_code=302)
+
+    # First-party API token (HTTP-only) for server-side calls or Swagger preauth logic
+    response.set_cookie(
+        key="api_access_token",
+        value=api_access,
+        httponly=True,
+        secure=True,
+        samesite=COOKIE_SAMESITE,
+        max_age=TOKEN_EXPIRES_MIN * 60,
+        path="/",
+    )
+
+    # Optional: Okta access token (HTTP-only)
+    if tokens.get("access_token"):
+        response.set_cookie(
+            key="okta_access_token",
+            value=tokens["access_token"],
+            httponly=True,
+            secure=True,
+            samesite=COOKIE_SAMESITE,
+            max_age=tokens.get("expires_in", TOKEN_EXPIRES_MIN * 60),
+            path="/",
+        )
+
+    # Optional: Okta refresh token (only if offline_access was requested)
+    if tokens.get("refresh_token"):
+        response.set_cookie(
+            key="okta_refresh_token",
+            value=tokens["refresh_token"],
+            httponly=True,
+            secure=True,
+            samesite=COOKIE_SAMESITE,
+            max_age=30 * 24 * 3600,
+            path="/",
+        )
+
+    return response
 
 
 @okta_router.get("/authz/ready", include_in_schema=False)
@@ -1059,7 +1078,7 @@ async def okta_authz_ready():
         ("OKTA_REDIRECT_URI", OKTA_REDIRECT_URI),
     ]:
         if not v:
-            issues.append(f"Missing {k}")
+            issues.append("Missing %s" % k)
     try:
         meta = await get_oidc_metadata()
         for f in ["authorization_endpoint", "token_endpoint", "jwks_uri"]:
@@ -1077,7 +1096,6 @@ async def okta_logout(request: Request):
     logout_url = f"{OKTA_ISSUER}/v1/logout"
     tokens = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     okta_refresh = tokens.get("okta_refresh_token")
-
     if okta_refresh:
         data = {"token": okta_refresh, "token_type_hint": "refresh_token", "client_id": OKTA_CLIENT_ID}
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
