@@ -1,130 +1,92 @@
 
-# security_deps.py
-import time, base64, logging, os, httpx
-from typing import Optional, Dict, Any, List
-from fastapi import HTTPException, status, Depends
-from jose import jwt, JWTError
+# security_deps.py (Option A: cookie fallback)
+from typing import Optional, List, Dict
+from fastapi import HTTPException, status, Request
+import os
+import httpx
+from jose import jwt
 
-OKTA_ISSUER = (os.getenv("OKTA_ISSUER") or "").strip()
-OKTA_METADATA_URL = (os.getenv("OKTA_METADATA_URL") or "").strip()
-
-# Minimal in-memory caches
-_meta_cache: Optional[Dict[str, Any]] = None
-_jwks_cache_okta: Optional[Dict[str, Any]] = None
-_jwks_cache_okta_exp: float = 0
-_jwks_cache_local: Optional[Dict[str, Any]] = None
-_jwks_cache_local_exp: float = 0
-
-JWKS_TTL = 300  # 5 minutes
-
-async def _get_okta_meta() -> Dict[str, Any]:
-    global _meta_cache
-    if _meta_cache:
-        return _meta_cache
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(OKTA_METADATA_URL)
-        r.raise_for_status()
-        _meta_cache = r.json()
-        return _meta_cache
-
-async def _get_okta_jwks() -> Dict[str, Any]:
-    global _jwks_cache_okta, _jwks_cache_okta_exp
-    now = time.time()
-    if _jwks_cache_okta and now < _jwks_cache_okta_exp:
-        return _jwks_cache_okta
-    meta = await _get_okta_meta()
-    jwks_uri = meta.get("jwks_uri")
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(jwks_uri)
-        r.raise_for_status()
-        _jwks_cache_okta = r.json()
-        _jwks_cache_okta_exp = now + JWKS_TTL
-        return _jwks_cache_okta
-
-async def _get_local_jwks(base_url: str) -> Dict[str, Any]:
-    """Fetch your API's JWKS for local RS256 verification."""
-    global _jwks_cache_local, _jwks_cache_local_exp
-    now = time.time()
-    if _jwks_cache_local and now < _jwks_cache_local_exp:
-        return _jwks_cache_local
-    url = f"{base_url}/.well-known/jwks.json"
-    async with httpx.AsyncClient(timeout=5) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        _jwks_cache_local = r.json()
-        _jwks_cache_local_exp = now + JWKS_TTL
-        return _jwks_cache_local
-
+# Simple principal container
 class Principal:
-    def __init__(self, sub: str, scopes: List[str], roles: List[str], raw: Dict[str, Any]):
+    def __init__(self, sub: str, scopes: List[str], raw: Dict):
         self.sub = sub
         self.scopes = scopes
-        self.roles = roles
         self.raw = raw
 
-async def require_auth(authorization: Optional[str] = None, base_url: Optional[str] = None) -> Principal:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1].strip()
+# Environment for Okta validation
+OKTA_ISSUER = (os.getenv("OKTA_ISSUER") or "").strip()
+OKTA_METADATA_URL = (os.getenv("OKTA_METADATA_URL") or "").strip()
+OKTA_AUDIENCE = (os.getenv("OKTA_AUDIENCE") or "api://default").strip()
+
+BUSINESS_PREFIXES = ("orders:", "customers:", "invoices:", "agreements:", "users:")
+
+async def _fetch_json(url: str) -> Dict:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()
+
+def _bearer_from_header_or_cookie(authorization: Optional[str], request: Request) -> str:
+    # Prefer Authorization header
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    # Fallback to secure HTTP-only cookies set by /callback
+    token = request.cookies.get("api_access_token") or request.cookies.get("okta_access_token")
+    if token:
+        return token
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+
+async def require_auth(authorization: Optional[str], base_url: str, request: Request) -> Principal:
+    token = _bearer_from_header_or_cookie(authorization, request)
+
+    # 1) Try first-party RS256 token via local JWKS
     try:
+        local_jwks = await _fetch_json(f"{base_url}/.well-known/jwks.json")
         header = jwt.get_unverified_header(token)
-        claims_unverified = jwt.get_unverified_claims(token)
+        kid = header.get("kid")
+        # Find matching key in JWKS
+        key = next(k for k in local_jwks.get("keys", []) if k.get("kid") == kid)
+        claims = jwt.decode(
+            token,
+            key,  # python-jose accepts a JWK dict
+            algorithms=["RS256"],
+            options={"require_exp": True}
+        )
+        scopes = claims.get("scopes") or []
+        return Principal(sub=claims.get("sub") or "", scopes=scopes, raw=claims)
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token header")
+        pass  # Fall through to Okta
 
-    iss = claims_unverified.get("iss")
-    kid = header.get("kid")
+    # 2) Try Okta access token via Okta JWKS
+    if not OKTA_METADATA_URL or not OKTA_ISSUER:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    try:
+        meta = await _fetch_json(OKTA_METADATA_URL)
+        jwks_uri = meta.get("jwks_uri")
+        okta_jwks = await _fetch_json(jwks_uri)
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        key = next(k for k in okta_jwks.get("keys", []) if k.get("kid") == kid)
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            audience=OKTA_AUDIENCE,
+            issuer=OKTA_ISSUER,
+            options={"require_exp": True, "require_aud": True, "require_iss": True}
+        )
+        scp = claims.get("scp") or []
+        business_scopes = [s for s in scp if s.startswith(BUSINESS_PREFIXES)]
+        scopes = business_scopes if business_scopes else ["orders:read"]
+        return Principal(sub=claims.get("sub") or "", scopes=scopes, raw=claims)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    jwk = None
-    if iss and OKTA_ISSUER and iss.rstrip("/") == OKTA_ISSUER.rstrip("/"):
-        # Okta token path
-        jwks = await _get_okta_jwks()
-        for k in jwks.get("keys", []):
-            if k.get("kid") == kid:
-                jwk = k
-                break
-        audience = claims_unverified.get("aud")
-        try:
-            claims = jwt.decode(
-                token,
-                jwk,  # python-jose accepts JWK dict
-                algorithms=["RS256"],
-                audience=audience or os.getenv("OKTA_AUDIENCE"),
-                issuer=OKTA_ISSUER,
-                options={"require_exp": True, "require_iat": True, "require_iss": True}
-            )
-        except JWTError as e:
-            raise HTTPException(status_code=401, detail=f"Okta token verification failed: {str(e)}")
-        scopes = claims.get("scp", [])
-        roles = claims.get("roles", claims.get("groups", [])) or []
-        return Principal(sub=claims.get("sub", ""), scopes=scopes, roles=roles, raw=claims)
-    else:
-        # Your API token path (RS256 signed by your keys)
-        if not base_url:
-            # Base URL can be injected in FastAPI dependency via Request
-            raise HTTPException(status_code=500, detail="Base URL not set for JWKS retrieval")
-        jwks = await _get_local_jwks(base_url)
-        for k in jwks.get("keys", []):
-            if k.get("kid") == kid:
-                jwk = k
-                break
-        if not jwk:
-            raise HTTPException(status_code=401, detail="Unknown key id")
-        try:
-            claims = jwt.decode(
-                token, jwk, algorithms=["RS256"],
-                options={"require_exp": True}
-            )
-        except JWTError as e:
-            raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
-        scopes = claims.get("scopes", [])
-        roles = claims.get("roles", [])
-        return Principal(sub=claims.get("sub", ""), scopes=scopes, roles=roles, raw=claims)
-
-def require_scopes(*required: str):
-    async def _dep(principal: Principal = Depends(require_auth)):
-        s = set(principal.scopes or [])
-        if not set(required).issubset(s):
-            raise HTTPException(status_code=403, detail="insufficient_scope")
+# Scope checker
+def require_scopes(*needed: str):
+    def _check(principal: Principal):
+        missing = [s for s in needed if s not in (principal.scopes or [])]
+        if missing:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Missing scopes: {missing}")
         return principal
-    return _dep
+    return _check
