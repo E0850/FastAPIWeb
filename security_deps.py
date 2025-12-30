@@ -1,5 +1,3 @@
-
-# security_deps.py (Option A: cookie fallback)
 from typing import Optional, List, Dict
 from fastapi import HTTPException, status, Request
 import os
@@ -44,7 +42,6 @@ async def require_auth(authorization: Optional[str], base_url: str, request: Req
         local_jwks = await _fetch_json(f"{base_url}/.well-known/jwks.json")
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
-        # Find matching key in JWKS
         key = next(k for k in local_jwks.get("keys", []) if k.get("kid") == kid)
         claims = jwt.decode(
             token,
