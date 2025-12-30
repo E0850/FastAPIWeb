@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from passlib.context import CryptContext
-from jose import JWTError, jwt
+from jose import jwt
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -102,13 +102,12 @@ ROLE_TO_SCOPES = {
 # ============================ App & Security Config ===========================
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
 TOKEN_EXPIRES_MIN = int(os.getenv("TOKEN_EXPIRES_MIN", "60"))
 REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
 REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "true").lower() == "true"
-REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "strict").lower()  # strict|lax|none
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax").lower()  # strict|lax|none
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
@@ -174,7 +173,6 @@ class RS256KeyStore:
         self._load_env()
 
     def _load_env(self):
-        # Load base64-encoded PEMs
         for k, v in os.environ.items():
             if k.startswith("JWT_RS256_PRIVATE_KEY_B64__"):
                 kid = k.split("__", 1)[1]
@@ -182,7 +180,6 @@ class RS256KeyStore:
             elif k.startswith("JWT_RS256_PUBLIC_KEY_B64__"):
                 kid = k.split("__", 1)[1]
                 self.pub_by_kid[kid] = _b64_to_text(v)
-        # Load raw PEM overrides
         for k, v in os.environ.items():
             if k.startswith("JWT_RS256_PRIVATE_KEY__"):
                 kid = k.split("__", 1)[1]
@@ -213,12 +210,8 @@ class RS256KeyStore:
                 n = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
                 e = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
                 keys.append({
-                    "kty": "RSA",
-                    "kid": kid,
-                    "alg": JWT_RS256_ALG,
-                    "use": "sig",
-                    "n": _b64url(n),
-                    "e": _b64url(e),
+                    "kty": "RSA", "kid": kid, "alg": JWT_RS256_ALG, "use": "sig",
+                    "n": _b64url(n), "e": _b64url(e),
                 })
             except Exception as ex:
                 logging.exception("JWKS: failed to load public key for kid=%s: %s", kid, ex)
@@ -704,7 +697,7 @@ def login_for_access_token(
         return response
     return resp_body
 
-@auth_router.get("/me", response_model=UserPublic)
+@app.get("/me", response_model=UserPublic)
 def read_me(current_user: User = Depends(lambda: None)) -> UserPublic:
     return user_out(current_user)
 
@@ -824,7 +817,7 @@ OKTA_CLIENT_ID = (os.getenv("OKTA_CLIENT_ID") or "").strip()
 OKTA_CLIENT_SECRET = (os.getenv("OKTA_CLIENT_SECRET") or "").strip()
 OKTA_REDIRECT_URI = (os.getenv("OKTA_REDIRECT_URI") or "").strip()
 OKTA_DEFAULT_SCOPES = (os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email")).strip()
-OKTA_TOKEN_AUTH_METHOD = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()  # basic|post
+OKTA_TOKEN_AUTH_METHOD = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()
 
 if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_REDIRECT_URI]):
     logging.warning("Okta env incomplete; /authorize and /callback will fail.")
@@ -883,12 +876,10 @@ def pop_pkce_state(state: str) -> Optional[Dict[str, str]]:
         if not rec:
             return None
         if int(time.time()) - rec.created_at > STATE_TTL_SEC:
-            db.delete(rec); db.commit()
-            return None
+            db.delete(rec); db.commit(); return None
         out = {"code_verifier": rec.code_verifier, "nonce": rec.nonce}
         db.delete(rec); db.commit()
         return out
-
 
 @okta_router.get("/authorize")
 async def okta_authorize():
@@ -906,19 +897,15 @@ async def okta_authorize():
     params = {
         "client_id": OKTA_CLIENT_ID,
         "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,  # add offline_access + custom API scopes if desired
+        "scope": OKTA_DEFAULT_SCOPES,
         "redirect_uri": OKTA_REDIRECT_URI,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
-        # Optional: resource/audience
-        # "audience": os.getenv("OKTA_AUDIENCE"),
     }
     url = f"{auth_endpoint}?{urlencode(params)}"
-    logging.info("Okta authorize initiated")
     return RedirectResponse(url, status_code=302)
-
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -936,7 +923,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not token_endpoint:
         raise HTTPException(status_code=500, detail="token_endpoint missing")
 
-    # Build base body WITHOUT client_id; we'll add it only when appropriate
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -947,19 +933,16 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if OKTA_CLIENT_SECRET:
         auth_method = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()
         if auth_method == "post":
-            # client_secret_post → client_id & client_secret in body; NO Authorization header
             data["client_id"] = OKTA_CLIENT_ID
             data["client_secret"] = OKTA_CLIENT_SECRET
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
         else:
-            # client_secret_basic → Authorization: Basic; DO NOT send client_id in body
             basic = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
             headers = {
                 "Authorization": f"Basic {basic}",
                 "Content-Type": "application/x-www-form-urlencoded",
             }
     else:
-        # Public PKCE (no secret) → include client_id in body; NO Authorization header
         data["client_id"] = OKTA_CLIENT_ID
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -973,25 +956,23 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
 
-    # Provide Okta access token to python-jose to validate at_hash (if present)
     okta_access = tokens.get("access_token")
-
     jwks = await get_jwks()
     header = jwt.get_unverified_header(id_token)
-    kid = header.get("kid")
-    alg = header.get("alg")
+    kid = header.get("kid"); alg = header.get("alg")
     if alg != "RS256":
         raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
 
     try:
         key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
+        # python-jose verifies at_hash if access_token is provided
         claims = jwt.decode(
             id_token,
-            key,  # python-jose accepts JWK dict directly
+            key,
             algorithms=["RS256"],
             audience=OKTA_CLIENT_ID,
             issuer=OKTA_ISSUER,
-            access_token=okta_access,  # ensures at_hash check
+            access_token=okta_access,
             options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
         )
     except Exception as e:
@@ -1000,7 +981,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
 
-    # Provision/lookup local user and mint first-party API access token
+    # Provision/lookup local user and mint first‑party API access token
     email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
     with Session(engine) as s:
         user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
@@ -1023,13 +1004,12 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             headers={"kid": kid_active},
         )
 
-    # --- Redirect to Swagger UI and set cookies ---
-    POST_LOGIN_REDIRECT = os.getenv("POST_LOGIN_REDIRECT", "/docs-dark")
+    # Redirect to Swagger UI (/docs-custom) and set secure cookies
+    POST_LOGIN_REDIRECT = os.getenv("POST_LOGIN_REDIRECT", "/docs-custom")
     COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
 
     response = RedirectResponse(url=POST_LOGIN_REDIRECT, status_code=302)
 
-    # First-party API token (HTTP-only) for server-side calls or Swagger preauth logic
     response.set_cookie(
         key="api_access_token",
         value=api_access,
@@ -1040,7 +1020,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         path="/",
     )
 
-    # Optional: Okta access token (HTTP-only)
     if tokens.get("access_token"):
         response.set_cookie(
             key="okta_access_token",
@@ -1052,7 +1031,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             path="/",
         )
 
-    # Optional: Okta refresh token (only if offline_access was requested)
     if tokens.get("refresh_token"):
         response.set_cookie(
             key="okta_refresh_token",
@@ -1066,7 +1044,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
 
     return response
 
-
 @okta_router.get("/authz/ready", include_in_schema=False)
 async def okta_authz_ready():
     issues = []
@@ -1078,7 +1055,7 @@ async def okta_authz_ready():
         ("OKTA_REDIRECT_URI", OKTA_REDIRECT_URI),
     ]:
         if not v:
-            issues.append("Missing %s" % k)
+            issues.append(f"Missing {k}")
     try:
         meta = await get_oidc_metadata()
         for f in ["authorization_endpoint", "token_endpoint", "jwks_uri"]:
@@ -1087,7 +1064,6 @@ async def okta_authz_ready():
     except Exception as e:
         issues.append(f"Metadata error: {str(e)}")
     return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)
-
 
 @okta_router.post("/logout")
 async def okta_logout(request: Request):
@@ -1110,16 +1086,13 @@ async def okta_logout(request: Request):
     return JSONResponse({"ok": True, "logout": logout_url})
 
 # ============================ Mount Routers & Docs ============================
-from security_deps import require_auth, require_scopes, Principal  # present in repo
+from security_deps import require_auth, require_scopes, Principal
 
 async def _auth_dep(request: Request) -> Principal:
     auth = request.headers.get("Authorization")
     return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"))
 
-# Protect business routers
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
-
-# Keep auth and Okta routes public
 app.include_router(auth_router)
 app.include_router(okta_router)
 
