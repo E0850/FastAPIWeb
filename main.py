@@ -804,20 +804,22 @@ async def okta_authorize():
     save_pkce_state(state, code_verifier, nonce)
 
     from urllib.parse import urlencode
-
-    params = {
-        "client_id": OKTA_CLIENT_ID,
-        "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,  # openid profile email ONLY
-        "redirect_uri": OKTA_REDIRECT_URI,
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-        "nonce": nonce,
-    }
-
-    url = f"{auth_endpoint}?{urlencode(params)}"
-    logging.info("Okta authorize URL: %s", url)
+    
+params = {
+    "client_id": OKTA_CLIENT_ID,
+    "response_type": "code",
+    "scope": OKTA_DEFAULT_SCOPES,  # now includes offline_access and api scopes
+    "redirect_uri": OKTA_REDIRECT_URI,
+    "state": state,
+    "code_challenge": code_challenge,
+    "code_challenge_method": "S256",
+    "nonce": nonce,
+    # Optional, if your AS requires:
+    # "resource": os.getenv("OKTA_AUDIENCE"),
+    # or "audience": os.getenv("OKTA_AUDIENCE"),
+}
+# Avoid logging the full URL with secrets in prod
+logging.info("Okta authorize initiated")
 
     return RedirectResponse(url, status_code=302)
 
@@ -876,6 +878,35 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
 
     return JSONResponse({"ok": True, "provider": "okta", "id_token_claims": claims, "access_token": tokens.get("access_token"), "refresh_token": tokens.get("refresh_token"), "token_type": tokens.get("token_type"), "expires_in": tokens.get("expires_in")})
 
+
+# After 'claims' is validated and tokens dict is available
+email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+# Look up (or provision) a local user and determine role
+with Session(engine) as s:
+    user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
+    if not user:
+        # optional: auto-provision as viewer
+        user = User(Email_Address=(email or "").lower(), User_Name=email or "okta_user", Role="viewer", Is_Active=True, Hashed_Pword=pwd_context.hash(os.urandom(8)))
+        s.add(user); s.commit(); s.refresh(user)
+
+    scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
+    kid, priv = rs256_keystore.get_active_signing_key()
+    api_access = jwt.encode(
+        {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
+        priv, algorithm=JWT_RS256_ALG, headers={"kid": kid}
+    )
+
+return JSONResponse({
+    "ok": True,
+    "provider": "okta",
+    "id_token_claims": claims,
+    "access_token": tokens.get("access_token"),          # Okta access token (optional for client use)
+    "api_access_token": api_access,                      # Your API token for calling your endpoints
+    "refresh_token": tokens.get("refresh_token"),
+    "token_type": tokens.get("token_type"),
+    "expires_in": tokens.get("expires_in"),
+})
+
 @okta_router.get("/authz/ready", include_in_schema=False)
 async def okta_authz_ready():
     issues = []
@@ -891,10 +922,49 @@ async def okta_authz_ready():
         issues.append(f"Metadata error: {str(e)}")
     return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)
 
+@okta_router.post("/logout")
+async def okta_logout(request: Request):
+    meta = await get_oidc_metadata()
+    revoke_url = meta.get("revocation_endpoint")  # available on custom AS / default AS
+    logout_url = f"{OKTA_ISSUER}/v1/logout"
+    tokens = await request.json() if request.headers.get("content-type","").startswith("application/json") else {}
+    okta_refresh = tokens.get("okta_refresh_token")
+
+    if okta_refresh:
+        data = {"token": okta_refresh, "token_type_hint": "refresh_token", "client_id": OKTA_CLIENT_ID}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if OKTA_CLIENT_SECRET:
+            import base64
+            headers["Authorization"] = "Basic " + base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                await client.post(revoke_url, data=data, headers=headers)
+            except Exception as e:
+                logging.warning("Okta revocation failed: %s", e)
+
+    # RP-initiated logout (optional post_logout_redirect_uri config in Okta app)
+    return JSONResponse({"ok": True, "logout": logout_url})
+
 # ============================ Mount Routers ==================================
-require_client_auth = os.getenv("REQUIRE_CLIENT_AUTH", "true").lower() == "true"
-protected = [Depends(lambda: None)] if require_client_auth else []
-app.include_router(orders_router, dependencies=protected)
+
+# AFTER
+from fastapi import Request, Depends
+from security_deps import require_auth, require_scopes, Principal
+
+def base_url_dep(request: Request) -> str:
+    # e.g., https://fastapiweb-yex7.onrender.com
+    return str(request.base_url).rstrip("/")
+
+# A wrapper that injects base_url for your JWKS path when validating local tokens
+async def _auth_dep(request: Request) -> Principal:
+    auth = request.headers.get("Authorization")
+    return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"))
+
+# Protect business routers with the auth dependency
+app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
+
+# Keep auth and Okta routes public (no dependencies),
+# otherwise the login and OIDC redirect/callback would be blocked.
 app.include_router(auth_router)
 app.include_router(okta_router)
 
