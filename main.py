@@ -1,3 +1,4 @@
+
 # SimpleAPI_SQLAlchemy_version.py
 """
 API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
@@ -15,9 +16,11 @@ What this version adds:
 10) Optional cookie-based refresh token delivery via env flags.
 11) Okta Authorization Code + PKCE integration (custom server) with
     client_secret_basic at /token for confidential clients.
+
 Run locally:
  uvicorn main:app --reload --port 8000
 """
+
 import httpx
 import os
 import time
@@ -34,13 +37,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
+
 from sqlalchemy import Boolean, Integer, String, create_engine, select, or_, cast
 from sqlalchemy import DateTime, func, UniqueConstraint
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
 # Security imports (OAuth2 + JWT + password hashing)
 from passlib.context import CryptContext
 from jose import JWTError, jwt  # pip install "python-jose[cryptography]"
+
 # Rate limit imports
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -111,7 +117,7 @@ REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
 REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "true").lower() == "true"
-REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "strict").lower()  # strict|lax|none
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "strict").lower()  # strict\lax\none
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
@@ -143,7 +149,8 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={
             "code": "too_many_requests",
-            "message": "Too many failed login attempts. Try again later." if str(request.url.path).lower() == "/token" else "Too many requests.",
+            "message": "Too many failed login attempts. Try again later."
+            if str(request.url.path).lower() == "/token" else "Too many requests.",
             "retry_after_seconds": retry_after,
         },
         headers={"Retry-After": str(retry_after)},
@@ -175,6 +182,7 @@ class RS256KeyStore:
         self.priv_by_kid: Dict[str, str] = {}
         self.pub_by_kid: Dict[str, str] = {}
         self._load_env()
+
     def _load_env(self):
         for k, v in os.environ.items():
             if k.startswith("JWT_RS256_PRIVATE_KEY_B64__"):
@@ -192,6 +200,7 @@ class RS256KeyStore:
                 self.pub_by_kid.setdefault(kid, _normalize_pem(v.strip().strip('"')))
         if not self.active_kid and self.priv_by_kid:
             self.active_kid = sorted(self.priv_by_kid.keys())[-1]
+
     def get_active_signing_key(self) -> Tuple[str, str]:
         if not self.active_kid:
             raise RuntimeError("JWT_ACTIVE_KID is not set")
@@ -199,8 +208,10 @@ class RS256KeyStore:
         if not priv:
             raise RuntimeError(f"No private key configured for kid={self.active_kid}")
         return self.active_kid, priv
+
     def get_public_key(self, kid: str) -> Optional[str]:
         return self.pub_by_kid.get(kid)
+
     def jwks(self) -> dict:
         keys = []
         for kid, pub_pem in self.pub_by_kid.items():
@@ -233,6 +244,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 raw_origins = os.getenv("CORS_ORIGINS", "")
 allow_origins: List[str] = [o.strip() for o in raw_origins.split(",") if o.strip()]
 ENV = os.getenv("ENV", "dev").lower()
+
 if ENV == "prod" and not allow_origins:
     raise RuntimeError("CORS_ORIGINS must be set in production (comma-separated list).")
 if ENV != "prod" and not allow_origins:
@@ -245,12 +257,12 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
- 
+
 # ============================ Database (PostgreSQL) ==========================
 DATABASE_URL = os.getenv("DB_URL", "").strip()
 if not DATABASE_URL:
     raise RuntimeError("DB_URL is not set. Put it in .env or environment variables.")
-DATABASE_URL = DATABASE_URL.replace("&amp;", "&")
+DATABASE_URL = DATABASE_URL.replace("&", "&")
 
 engine = create_engine(
     DATABASE_URL,
@@ -262,7 +274,7 @@ engine = create_engine(
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
-# ------------------------------- ORM MODELS (SQLAlchemy) -------------------------------
+# ---------------------- ORM MODELS (SQLAlchemy) ----------------------
 class Order(Base):
     __tablename__ = "orders"
     __table_args__ = {"schema": "dbo"}
@@ -363,6 +375,7 @@ class OrderIn(BaseModel):
     Customer_Number: int
     Quantity: int
     Price: int
+
 class OrderOut(OrderIn):
     Order_Number: int
 
@@ -379,6 +392,7 @@ class CustomerIn(BaseModel):
     Customer_Address: str
     Contact_Number: str
     Email_Address: EmailStr
+
 class CustomerOut(CustomerIn):
     Customer_Number: int
 
@@ -398,6 +412,7 @@ class UserCreate(BaseModel):
     Contact_Number: Optional[str] = None
     Vat_Number: Optional[str] = None
     Password: str = Field(..., min_length=6)
+
 class UserPublic(BaseModel):
     User_Id: int
     User_Name: str
@@ -430,6 +445,7 @@ class UserUpdate(BaseModel):
     Vat_Number: Optional[str] = None
     Is_Active: Optional[bool] = None
     Role: Optional[str] = None
+
 class UserPasswordUpdate(BaseModel):
     Old_Password: str = Field(..., min_length=8)
     New_Password: str = Field(..., min_length=8)
@@ -440,6 +456,7 @@ class InvoiceIn(BaseModel):
     Invoice_Email: Optional[str] = None
     Amount: int
     Customer_Number: int
+
 class InvoiceOut(InvoiceIn):
     Invoice_Number: int
 
@@ -478,6 +495,7 @@ class AgreementIn(BaseModel):
     Price_list: str
     Reason_code_terminated_agreement: str
     Project_number: str
+
 class AgreementOut(AgreementIn):
     Agreement_number: str
 
@@ -510,7 +528,7 @@ def agreement_out(a: Agreement) -> AgreementOut:
     )
 
 # ================================ ROUTERS-ENDPOINTS ================================
-orders_router = APIRouter(tags=["Orders"]) 
+orders_router = APIRouter(tags=["Orders"])
 responses204 = {204: {"description": "Deleted successfully", "content": {}}}
 
 @orders_router.get("/GetOrder/{Order_Number}", response_model=OrderOut)
@@ -523,7 +541,13 @@ def get_order(request: Request, Order_Number: int, session: Session = Depends(ge
 
 @orders_router.get("/ListOrders", response_model=List[OrderOut])
 @limiter.limit("50/minute")
-def list_orders(request: Request, Order_Number: Optional[int] = None, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0), session: Session = Depends(get_session)) -> List[OrderOut]:
+def list_orders(
+    request: Request,
+    Order_Number: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[OrderOut]:
     stmt = select(Order)
     if Order_Number is not None:
         stmt = stmt.where(Order.Order_Number == Order_Number)
@@ -532,12 +556,25 @@ def list_orders(request: Request, Order_Number: Optional[int] = None, limit: int
 
 @orders_router.get("/SearchOrder", response_model=List[OrderOut])
 @limiter.limit("50/minute")
-def search_order(request: Request, SQRY: Optional[str] = Query(None), limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0), session: Session = Depends(get_session)) -> List[OrderOut]:
+def search_order(
+    request: Request,
+    SQRY: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[OrderOut]:
     try:
         stmt = select(Order)
         if SQRY:
             search_term = f"%{SQRY}%"
-            stmt = stmt.where(or_(cast(Order.Order_Number, String).ilike(search_term), cast(Order.Customer_Number, String).ilike(search_term), cast(Order.Quantity, String).ilike(search_term), cast(Order.Price, String).ilike(search_term)))
+            stmt = stmt.where(
+                or_(
+                    cast(Order.Order_Number, String).ilike(search_term),
+                    cast(Order.Customer_Number, String).ilike(search_term),
+                    cast(Order.Quantity, String).ilike(search_term),
+                    cast(Order.Price, String).ilike(search_term),
+                )
+            )
         stmt = stmt.order_by(Order.Order_Number).limit(limit).offset(offset)
         results = session.scalars(stmt).all()
         return [order_out(o) for o in results]
@@ -547,7 +584,12 @@ def search_order(request: Request, SQRY: Optional[str] = Query(None), limit: int
 
 @orders_router.post("/CreateOrders", response_model=List[OrderOut], status_code=201)
 @limiter.limit("50/minute")
-def create_orders(request: Request, payload: List[OrderIn], session: Session = Depends(get_session), _: User = Depends(lambda: None)):
+def create_orders(
+    request: Request,
+    payload: List[OrderIn],
+    session: Session = Depends(get_session),
+    _: User = Depends(lambda: None),
+):
     created = []
     for item in payload:
         o = Order(**item.model_dump())
@@ -568,7 +610,13 @@ def create_orders(request: Request, payload: List[OrderIn], session: Session = D
 
 @orders_router.put("/UpdateOrders/{Order_Number}", response_model=OrderOut)
 @limiter.limit("50/minute")
-def update_order(request: Request, Order_Number: int, payload: OrderIn, session: Session = Depends(get_session), _: User = Depends(lambda: None)) -> OrderOut:
+def update_order(
+    request: Request,
+    Order_Number: int,
+    payload: OrderIn,
+    session: Session = Depends(get_session),
+    _: User = Depends(lambda: None),
+) -> OrderOut:
     o = session.get(Order, Order_Number)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -585,7 +633,12 @@ def update_order(request: Request, Order_Number: int, payload: OrderIn, session:
 
 @orders_router.delete("/DeleteOrders/{Order_Number}", status_code=204, response_class=Response, responses=responses204)
 @limiter.limit("50/minute")
-def delete_order(request: Request, Order_Number: int, session: Session = Depends(get_session), _: User = Depends(lambda: None)) -> Response:
+def delete_order(
+    request: Request,
+    Order_Number: int,
+    session: Session = Depends(get_session),
+    _: User = Depends(lambda: None),
+) -> Response:
     o = session.get(Order, Order_Number)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -593,26 +646,37 @@ def delete_order(request: Request, Order_Number: int, session: Session = Depends
     session.commit()
     return Response(status_code=204)
 
-# (Customers/Invoices/Agreements/Users routes omitted here for brevity — same as earlier build)
-# ------------------------------- AUTH (Public) -------------------------------
+# (Customers/Invoices/Agreements/Users routes omitted here — same as earlier build)
+
+# ----------------------------- AUTH (Public) -----------------------------
 auth_router = APIRouter(tags=["Authorization"])
 
 @app.get("/.well-known/jwks.json", include_in_schema=False)
 def jwks():
-    return JSONResponse(rs256_keystore.jwks(), headers={"Cache-Control": "public, max-age=300"})
+    return JSONResponse(rs256_keystore.jwks(), headers={"Cache-Control": "public, max-age=300"})  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 @auth_router.post("/token")
 @limiter.limit("3/minute")
-def login_for_access_token(request: Request, form_data = Depends(OAuth2PasswordRequestForm), session: Session = Depends(get_session)) -> Token:
+def login_for_access_token(
+    request: Request,
+    form_data = Depends(OAuth2PasswordRequestForm),
+    session: Session = Depends(get_session),
+) -> Token:
     ip = request.client.host if request.client else "unknown"
     email = (form_data.username or "").strip().lower()
     user = session.scalar(select(User).where(User.Email_Address == email))
     if not user or not pwd_context.verify(form_data.password, user.Hashed_Pword):
         remaining = note_failed_attempt(email, ip)
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=ErrorDetail(code="bad_credentials", message="Invalid username or password.", attempts_remaining=remaining).model_dump())
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorDetail(code="bad_credentials", message="Invalid username or password.", attempts_remaining=remaining).model_dump()
+        )
     if not user.Is_Active:
         remaining = get_attempts_remaining(email, ip)
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=ErrorDetail(code="inactive_user", message="Inactive user.", attempts_remaining=remaining).model_dump())
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorDetail(code="inactive_user", message="Inactive user.", attempts_remaining=remaining).model_dump()
+        )
     clear_attempts(email, ip)
     try:
         if pwd_context.needs_update(user.Hashed_Pword):
@@ -620,18 +684,40 @@ def login_for_access_token(request: Request, form_data = Depends(OAuth2PasswordR
             session.commit()
     except Exception:
         pass
+
     scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
-    access_token = jwt.encode({"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)}, rs256_keystore.get_active_signing_key()[1], algorithm=JWT_RS256_ALG, headers={"kid": rs256_keystore.get_active_signing_key()[0]})
+    access_token = jwt.encode(
+        {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
+        rs256_keystore.get_active_signing_key()[1],
+        algorithm=JWT_RS256_ALG,
+        headers={"kid": rs256_keystore.get_active_signing_key()[0]},
+    )
     refresh_token_raw = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-    rt = RefreshToken(User_Id=user.User_Id, Token_Hash=pwd_context.hash(refresh_token_raw), Fingerprint=hashlib.sha256(refresh_token_raw.encode("utf-8")).hexdigest(), Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS), TokenVersionAtIssue=int(user.TokenVersion or 1), Is_Revoked=False)
+    rt = RefreshToken(
+        User_Id=user.User_Id,
+        Token_Hash=pwd_context.hash(refresh_token_raw),
+        Fingerprint=hashlib.sha256(refresh_token_raw.encode("utf-8")).hexdigest(),
+        Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS),
+        TokenVersionAtIssue=int(user.TokenVersion or 1),
+        Is_Revoked=False,
+    )
     session.add(rt)
     session.commit()
+
     resp_body = Token(access_token=access_token, token_type="bearer", refresh_token=refresh_token_raw, expires_in=TOKEN_EXPIRES_MIN * 60)
     if REFRESH_IN_COOKIE:
         response = JSONResponse(content=resp_body.model_dump())
-        response.set_cookie(key=REFRESH_COOKIE_NAME, value=refresh_token_raw, httponly=True, secure=REFRESH_COOKIE_SECURE, samesite=REFRESH_COOKIE_SAMESITE, max_age=REFRESH_EXPIRES_DAYS * 24 * 3600, path="/")
+        response.set_cookie(
+            key=REFRESH_COOKIE_NAME,
+            value=refresh_token_raw,
+            httponly=True,
+            secure=REFRESH_COOKIE_SECURE,
+            samesite=REFRESH_COOKIE_SAMESITE,
+            max_age=REFRESH_EXPIRES_DAYS * 24 * 3600,
+            path="/",
+        )
         return response
-    return resp_body
+    return resp_body  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 @auth_router.get("/me", response_model=UserPublic)
 def read_me(current_user: User = Depends(lambda: None)) -> UserPublic:
@@ -642,17 +728,24 @@ class RefreshRequest(BaseModel):
 
 @auth_router.post("/token/refresh")
 @limiter.limit("20/minute")
-def refresh_access_token(request: Request, payload: RefreshRequest, session: Session = Depends(get_session)) -> Token:
+def refresh_access_token(
+    request: Request,
+    payload: RefreshRequest,
+    session: Session = Depends(get_session),
+) -> Token:
     raw = (payload.refresh_token or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Missing refresh_token")
+
     fp = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     rec = session.scalar(select(RefreshToken).where(RefreshToken.Fingerprint == fp))
     if not rec:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     user = session.get(User, rec.User_Id)
     if not user or not user.Is_Active:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     now = datetime.now(timezone.utc)
     if rec.Is_Revoked or rec.Expires_At <= now:
         user.TokenVersion = (user.TokenVersion or 1) + 1
@@ -660,28 +753,53 @@ def refresh_access_token(request: Request, payload: RefreshRequest, session: Ses
             rt.Is_Revoked = True
         session.commit()
         raise HTTPException(status_code=401, detail="Refresh token reuse detected; tokens revoked")
+
     try:
         if not pwd_context.verify(raw, rec.Token_Hash):
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     if int(rec.TokenVersionAtIssue or 1) != int(user.TokenVersion or 1):
         for rt in session.scalars(select(RefreshToken).where(RefreshToken.User_Id == user.User_Id)).all():
             rt.Is_Revoked = True
         raise HTTPException(status_code=401, detail="Refresh token revoked")
+
     rec.Is_Revoked = True
     session.commit()
+
     scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
-    new_access = jwt.encode({"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)}, rs256_keystore.get_active_signing_key()[1], algorithm=JWT_RS256_ALG, headers={"kid": rs256_keystore.get_active_signing_key()[0]})
+    new_access = jwt.encode(
+        {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
+        rs256_keystore.get_active_signing_key()[1],
+        algorithm=JWT_RS256_ALG,
+        headers={"kid": rs256_keystore.get_active_signing_key()[0]},
+    )
     new_refresh = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-    session.add(RefreshToken(User_Id=user.User_Id, Token_Hash=pwd_context.hash(new_refresh), Fingerprint=hashlib.sha256(new_refresh.encode("utf-8")).hexdigest(), Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS), TokenVersionAtIssue=int(user.TokenVersion or 1), Is_Revoked=False))
+    session.add(RefreshToken(
+        User_Id=user.User_Id,
+        Token_Hash=pwd_context.hash(new_refresh),
+        Fingerprint=hashlib.sha256(new_refresh.encode("utf-8")).hexdigest(),
+        Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS),
+        TokenVersionAtIssue=int(user.TokenVersion or 1),
+        Is_Revoked=False,
+    ))
     session.commit()
+
     body = Token(access_token=new_access, token_type="bearer", refresh_token=new_refresh, expires_in=TOKEN_EXPIRES_MIN * 60)
     if REFRESH_IN_COOKIE:
         response = JSONResponse(content=body.model_dump())
-        response.set_cookie(key=REFRESH_COOKIE_NAME, value=new_refresh, httponly=True, secure=REFRESH_COOKIE_SECURE, samesite=REFRESH_COOKIE_SAMESITE, max_age=REFRESH_EXPIRES_DAYS * 24 * 3600, path="/")
+        response.set_cookie(
+            key=REFRESH_COOKIE_NAME,
+            value=new_refresh,
+            httponly=True,
+            secure=REFRESH_COOKIE_SECURE,
+            samesite=REFRESH_COOKIE_SAMESITE,
+            max_age=REFRESH_EXPIRES_DAYS * 24 * 3600,
+            path="/",
+        )
         return response
-    return body
+    return body  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 class LogoutRequest(BaseModel):
     refresh_token: Optional[str] = None
@@ -726,13 +844,15 @@ OKTA_REDIRECT_URI = (os.getenv("OKTA_REDIRECT_URI") or "").strip()
 OKTA_DEFAULT_SCOPES = (os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email")).strip()
 
 if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_REDIRECT_URI]):
-    logging.warning("Okta env incomplete; /authorize and /callback will fail.")
+    logging.warning("Okta env incomplete; /authorize and /callback will fail.")  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
-okta_router = APIRouter(tags=["Okta"]) 
+okta_router = APIRouter(tags=["Okta"])
 
 PKCE_DB_URL = os.getenv("PKCE_DB_URL", "sqlite:///./pkce_state.db")
 STATE_TTL_SEC = int(os.getenv("PKCE_STATE_TTL_SEC", "600"))
+
 BasePKCE = declarative_base()
+
 # CONDITIONAL SQLITE CONNECT ARGS (fixes invalid dsn when using Postgres)
 engine_pkce = (
     create_engine_okta(PKCE_DB_URL, connect_args={"check_same_thread": False})
@@ -794,34 +914,28 @@ async def okta_authorize():
     auth_endpoint = meta.get("authorization_endpoint")
     if not auth_endpoint:
         raise HTTPException(status_code=500, detail="authorization_endpoint missing")
-
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _sha256_b64(code_verifier)
-
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
-
     save_pkce_state(state, code_verifier, nonce)
-
     from urllib.parse import urlencode
-    
-params = {
-    "client_id": OKTA_CLIENT_ID,
-    "response_type": "code",
-    "scope": OKTA_DEFAULT_SCOPES,  # now includes offline_access and api scopes
-    "redirect_uri": OKTA_REDIRECT_URI,
-    "state": state,
-    "code_challenge": code_challenge,
-    "code_challenge_method": "S256",
-    "nonce": nonce,
-    # Optional, if your AS requires:
-    # "resource": os.getenv("OKTA_AUDIENCE"),
-    # or "audience": os.getenv("OKTA_AUDIENCE"),
-}
-# Avoid logging the full URL with secrets in prod
-logging.info("Okta authorize initiated")
-
-    return RedirectResponse(url, status_code=302)
+    params = {
+        "client_id": OKTA_CLIENT_ID,
+        "response_type": "code",
+        "scope": OKTA_DEFAULT_SCOPES,  # includes offline_access and api scopes
+        "redirect_uri": OKTA_REDIRECT_URI,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "nonce": nonce,
+        # Optional, if your AS requires:
+        # "resource": os.getenv("OKTA_AUDIENCE"),
+        # or "audience": os.getenv("OKTA_AUDIENCE"),
+    }
+    url = f"{auth_endpoint}?{urlencode(params)}"
+    logging.info("Okta authorize initiated")
+    return RedirectResponse(url, status_code=302)  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
@@ -832,6 +946,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         raise HTTPException(status_code=400, detail="Invalid or expired state")
     code_verifier = rec["code_verifier"]
     expected_nonce = rec["nonce"]
+
     meta = await get_oidc_metadata()
     token_endpoint = meta.get("token_endpoint")
     if not token_endpoint:
@@ -844,7 +959,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         "client_id": OKTA_CLIENT_ID,
         "code_verifier": code_verifier,
     }
-
     if OKTA_CLIENT_SECRET:
         auth = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
         headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
@@ -867,50 +981,66 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     alg = header.get("alg")
     if alg != "RS256":
         raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
+
     # python-jose accepts JWK dict directly
     try:
-        claims = jwt.decode(id_token, next(k for k in jwks.get("keys", []) if k.get("kid") == kid), algorithms=["RS256"], audience=OKTA_CLIENT_ID, issuer=OKTA_ISSUER, options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True})
+        claims = jwt.decode(
+            id_token,
+            next(k for k in jwks.get("keys", []) if k.get("kid") == kid),
+            algorithms=["RS256"],
+            audience=OKTA_CLIENT_ID,
+            issuer=OKTA_ISSUER,
+            options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"ID token verification failed: {str(e)}")
 
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
 
-    return JSONResponse({"ok": True, "provider": "okta", "id_token_claims": claims, "access_token": tokens.get("access_token"), "refresh_token": tokens.get("refresh_token"), "token_type": tokens.get("token_type"), "expires_in": tokens.get("expires_in")})
+    # Provision/lookup local user and mint first-party API access token (RS256)
+    email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+    with Session(engine) as s:
+        user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
+        if not user:
+            # optional: auto-provision as viewer
+            user = User(
+                Email_Address=(email or "").lower(),
+                User_Name=email or "okta_user",
+                Role="viewer",
+                Is_Active=True,
+                Hashed_Pword=pwd_context.hash(os.urandom(8)),
+            )
+            s.add(user); s.commit(); s.refresh(user)
 
+        scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
+        kid_active, priv = rs256_keystore.get_active_signing_key()
+        api_access = jwt.encode(
+            {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
+            priv, algorithm=JWT_RS256_ALG, headers={"kid": kid_active}
+        )
 
-# After 'claims' is validated and tokens dict is available
-email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
-# Look up (or provision) a local user and determine role
-with Session(engine) as s:
-    user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
-    if not user:
-        # optional: auto-provision as viewer
-        user = User(Email_Address=(email or "").lower(), User_Name=email or "okta_user", Role="viewer", Is_Active=True, Hashed_Pword=pwd_context.hash(os.urandom(8)))
-        s.add(user); s.commit(); s.refresh(user)
-
-    scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
-    kid, priv = rs256_keystore.get_active_signing_key()
-    api_access = jwt.encode(
-        {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
-        priv, algorithm=JWT_RS256_ALG, headers={"kid": kid}
-    )
-
-return JSONResponse({
-    "ok": True,
-    "provider": "okta",
-    "id_token_claims": claims,
-    "access_token": tokens.get("access_token"),          # Okta access token (optional for client use)
-    "api_access_token": api_access,                      # Your API token for calling your endpoints
-    "refresh_token": tokens.get("refresh_token"),
-    "token_type": tokens.get("token_type"),
-    "expires_in": tokens.get("expires_in"),
-})
+    return JSONResponse({
+        "ok": True,
+        "provider": "okta",
+        "id_token_claims": claims,
+        "access_token": tokens.get("access_token"),      # Okta access token (optional)
+        "api_access_token": api_access,                  # Your API token for calling endpoints
+        "refresh_token": tokens.get("refresh_token"),
+        "token_type": tokens.get("token_type"),
+        "expires_in": tokens.get("expires_in"),
+    })  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 @okta_router.get("/authz/ready", include_in_schema=False)
 async def okta_authz_ready():
     issues = []
-    for k, v in [("OKTA_ISSUER", OKTA_ISSUER), ("OKTA_METADATA_URL", OKTA_METADATA_URL), ("OKTA_CLIENT_ID", OKTA_CLIENT_ID), ("OKTA_CLIENT_SECRET", "***" if OKTA_CLIENT_SECRET else None), ("OKTA_REDIRECT_URI", OKTA_REDIRECT_URI)]:
+    for k, v in [
+        ("OKTA_ISSUER", OKTA_ISSUER),
+        ("OKTA_METADATA_URL", OKTA_METADATA_URL),
+        ("OKTA_CLIENT_ID", OKTA_CLIENT_ID),
+        ("OKTA_CLIENT_SECRET", "***" if OKTA_CLIENT_SECRET else None),
+        ("OKTA_REDIRECT_URI", OKTA_REDIRECT_URI),
+    ]:
         if not v:
             issues.append(f"Missing {k}")
     try:
@@ -920,48 +1050,45 @@ async def okta_authz_ready():
                 issues.append(f"Metadata missing {f}")
     except Exception as e:
         issues.append(f"Metadata error: {str(e)}")
-    return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)
+    return JSONResponse({"ok": not issues, "issues": issues}, status_code=200 if not issues else 500)  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 @okta_router.post("/logout")
 async def okta_logout(request: Request):
     meta = await get_oidc_metadata()
     revoke_url = meta.get("revocation_endpoint")  # available on custom AS / default AS
     logout_url = f"{OKTA_ISSUER}/v1/logout"
-    tokens = await request.json() if request.headers.get("content-type","").startswith("application/json") else {}
+    tokens = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     okta_refresh = tokens.get("okta_refresh_token")
 
     if okta_refresh:
         data = {"token": okta_refresh, "token_type_hint": "refresh_token", "client_id": OKTA_CLIENT_ID}
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         if OKTA_CLIENT_SECRET:
-            import base64
-            headers["Authorization"] = "Basic " + base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+            import base64 as _b64
+            headers["Authorization"] = "Basic " + _b64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
         async with httpx.AsyncClient(timeout=10) as client:
             try:
                 await client.post(revoke_url, data=data, headers=headers)
             except Exception as e:
                 logging.warning("Okta revocation failed: %s", e)
-
-    # RP-initiated logout (optional post_logout_redirect_uri config in Okta app)
-    return JSONResponse({"ok": True, "logout": logout_url})
+    return JSONResponse({"ok": True, "logout": logout_url})  # [2](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).txt)
 
 # ============================ Mount Routers ==================================
-
 # AFTER
-from fastapi import Request, Depends
-from security_deps import require_auth, require_scopes, Principal
+from fastapi import Request as _ReqAlias, Depends as _DepAlias
+from security_deps import require_auth, require_scopes, Principal  # present in repo per your note  # [1](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa/Documents/Microsoft%20Copilot%20Chat%20Files/security_deps.py)
 
-def base_url_dep(request: Request) -> str:
+def base_url_dep(request: _ReqAlias) -> str:
     # e.g., https://fastapiweb-yex7.onrender.com
     return str(request.base_url).rstrip("/")
 
 # A wrapper that injects base_url for your JWKS path when validating local tokens
-async def _auth_dep(request: Request) -> Principal:
+async def _auth_dep(request: _ReqAlias) -> Principal:
     auth = request.headers.get("Authorization")
     return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"))
 
 # Protect business routers with the auth dependency
-app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
+app.include_router(orders_router, dependencies=[_DepAlias(_auth_dep)])
 
 # Keep auth and Okta routes public (no dependencies),
 # otherwise the login and OIDC redirect/callback would be blocked.
@@ -970,7 +1097,13 @@ app.include_router(okta_router)
 
 @app.get("/docs-dark", include_in_schema=False)
 def docs_dark():
-    return get_swagger_ui_html(openapi_url=app.openapi_url, title=f"{app.title} - Docs (Dark)", swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js", swagger_css_url="/static/swagger-dark.css?v=32", swagger_favicon_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/favicon-32x32.png")
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Docs (Dark)",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-dark.css?v=32",
+        swagger_favicon_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/favicon-32x32.png",
+    )
 
 @app.get("/docs-custom", include_in_schema=False)
 def custom_docs():
