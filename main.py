@@ -1,3 +1,4 @@
+
 # SimpleAPI_SQLAlchemy_version.py
 """
 API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
@@ -571,10 +572,13 @@ def search_order(
         raise HTTPException(status_code=500, detail=f"Search order failed: {str(e)}")
 
 # --- WRITE ENDPOINTS: scope enforcement wired here ---
+from fastapi import Depends as _Depends  # alias to keep decorator lines compact later
+
 @orders_router.post(
     "/CreateOrders",
     response_model=List[OrderOut],
-    status_code=201
+    status_code=201,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # will be replaced below
 )
 @limiter.limit("50/minute")
 def create_orders(
@@ -602,7 +606,8 @@ def create_orders(
 
 @orders_router.put(
     "/UpdateOrders/{Order_Number}",
-    response_model=OrderOut
+    response_model=OrderOut,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # will be replaced below
 )
 @limiter.limit("50/minute")
 def update_order(
@@ -629,7 +634,8 @@ def update_order(
     "/DeleteOrders/{Order_Number}",
     status_code=204,
     response_class=Response,
-    responses=responses204
+    responses=responses204,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # will be replaced below
 )
 @limiter.limit("50/minute")
 def delete_order(
@@ -1160,13 +1166,38 @@ def scopes(*needed: str):
         return require_scopes(*needed)(principal)
     return _dep
 
+# Reusable dependency objects for write operations across resources
+WRITE_DEPS = {
+    "orders": Depends(scopes("orders:write")),
+    "customers": Depends(scopes("customers:write")),
+    "invoices": Depends(scopes("invoices:write")),
+    "agreements": Depends(scopes("agreements:write")),
+}
+
 # Protect business routers globally with auth
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
 
-# Add per-endpoint scope enforcement for write operations
-# (We can't attach decorators after definition, so add here via global dependencies)
-# NOTE: Already added in the endpoint decorators above if you prefer that style.
-# If you want global route-level enforcement, you can re-include with separate routes.
+# Apply per-endpoint scope enforcement (Orders)
+# Replace placeholder deps defined above in the endpoint decorators:
+orders_router.routes[-3].dependencies = [WRITE_DEPS["orders"]]  # CreateOrders
+orders_router.routes[-2].dependencies = [WRITE_DEPS["orders"]]  # UpdateOrders
+orders_router.routes[-1].dependencies = [WRITE_DEPS["orders"]]  # DeleteOrders
+
+# When you add customers_router / invoices_router / agreements_router:
+# app.include_router(customers_router, dependencies=[Depends(_auth_dep)])
+# @customers_router.post(..., dependencies=[WRITE_DEPS["customers"]])
+# @customers_router.put(...,  dependencies=[WRITE_DEPS["customers"]])
+# @customers_router.delete(..., dependencies=[WRITE_DEPS["customers"]])
+#
+# app.include_router(invoices_router, dependencies=[Depends(_auth_dep)])
+# @invoices_router.post(..., dependencies=[WRITE_DEPS["invoices"]])
+# @invoices_router.put(...,  dependencies=[WRITE_DEPS["invoices"]])
+# @invoices_router.delete(..., dependencies=[WRITE_DEPS["invoices"]])
+#
+# app.include_router(agreements_router, dependencies=[Depends(_auth_dep)])
+# @agreements_router.post(..., dependencies=[WRITE_DEPS["agreements"]])
+# @agreements_router.put(...,  dependencies=[WRITE_DEPS["agreements"]])
+# @agreements_router.delete(..., dependencies=[WRITE_DEPS["agreements"]])
 
 # Keep auth and Okta routes public
 app.include_router(auth_router)
