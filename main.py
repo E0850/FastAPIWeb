@@ -1,17 +1,30 @@
 
 # SimpleAPI_SQLAlchemy_version.py
 """
-<... header docstring unchanged ...>
+API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
+
+Highlights:
+ 1) All endpoints are locked by default.
+ 2) Unlock with a valid Bearer token (your RS256 API token or Okta access token).
+ 3) OAuth2 Password Flow for local login (/token) issuing RS256 JWTs.
+ 4) Refresh token rotation + reuse detection.
+ 5) Okta Authorization Code + PKCE (/authorize → /callback) with optional client_secret.
+ 6) JWKS published at /.well-known/jwks.json for RS256 verification.
+
+Run locally:
+  uvicorn main:app --reload --port 8000
 """
 
-import httpx
 import os
 import time
 import logging
+import base64
 import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple, Dict
+
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Depends, HTTPException, status, Query, APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
@@ -20,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
-from urllib.parse import urlencode  # <— moved to top for clarity
+from urllib.parse import urlencode
 
 from sqlalchemy import Boolean, Integer, String, create_engine, select, or_, cast
 from sqlalchemy import DateTime, func, UniqueConstraint
@@ -35,7 +48,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-# ---- Error model & login attempt helpers ----
+# ---------------------------- Error model & helpers ----------------------------
 class ErrorDetail(BaseModel):
     code: str
     message: str
@@ -69,7 +82,7 @@ def clear_attempts(username: str, ip: str) -> None:
     if key in _attempts:
         _attempts[key] = []
 
-# ---- Role → scopes ----
+# ----------------------------- Role → scopes map ------------------------------
 ROLE_TO_SCOPES = {
     "admin": [
         "orders:read", "orders:write",
@@ -88,22 +101,22 @@ ROLE_TO_SCOPES = {
     "user": ["orders:read"],
 }
 
-# ============================ Security Config ================================
+# ============================ App & Security Config ===========================
+load_dotenv()
+
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 TOKEN_EXPIRES_MIN = int(os.getenv("TOKEN_EXPIRES_MIN", "60"))
 
-# ============================ Refresh Token Config ============================
 REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
 REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "true").lower() == "true"
-REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "strict").lower()  # strict\lax\none
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "strict").lower()  # strict|lax|none
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
-# ============================ App & CORS ==========================
 app = FastAPI(
     title="API - Swagger UI - Beta Version",
     version="0.1.0",
@@ -113,6 +126,7 @@ app = FastAPI(
     ),
 )
 
+# Rate limiting
 def rate_limit_key(request: Request):
     try:
         return get_remote_address(request)
@@ -130,18 +144,16 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={
             "code": "too_many_requests",
-            "message": "Too many failed login attempts. Try again later."
-            if str(request.url.path).lower() == "/token" else "Too many requests.",
+            "message": (
+                "Too many failed login attempts. Try again later."
+                if str(request.url.path).lower() == "/token" else "Too many requests."
+            ),
             "retry_after_seconds": retry_after,
         },
         headers={"Retry-After": str(retry_after)},
     )
 
-# Load env
-load_dotenv()
-
-# ============================ RS256 Key Management =============================
-import base64
+# ============================ RS256 Key Management ============================
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
@@ -165,6 +177,7 @@ class RS256KeyStore:
         self._load_env()
 
     def _load_env(self):
+        # Load base64-encoded PEMs
         for k, v in os.environ.items():
             if k.startswith("JWT_RS256_PRIVATE_KEY_B64__"):
                 kid = k.split("__", 1)[1]
@@ -172,6 +185,7 @@ class RS256KeyStore:
             elif k.startswith("JWT_RS256_PUBLIC_KEY_B64__"):
                 kid = k.split("__", 1)[1]
                 self.pub_by_kid[kid] = _b64_to_text(v)
+        # Load raw PEM overrides
         for k, v in os.environ.items():
             if k.startswith("JWT_RS256_PRIVATE_KEY__"):
                 kid = k.split("__", 1)[1]
@@ -189,9 +203,6 @@ class RS256KeyStore:
         if not priv:
             raise RuntimeError(f"No private key configured for kid={self.active_kid}")
         return self.active_kid, priv
-
-    def get_public_key(self, kid: str) -> Optional[str]:
-        return self.pub_by_kid.get(kid)
 
     def jwks(self) -> dict:
         keys = []
@@ -218,6 +229,7 @@ class RS256KeyStore:
 
 rs256_keystore = RS256KeyStore()
 
+# =============================== CORS & Static ================================
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -239,11 +251,10 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# ============================ Database (PostgreSQL) ==========================
+# ============================ Database (PostgreSQL) ===========================
 DATABASE_URL = os.getenv("DB_URL", "").strip()
 if not DATABASE_URL:
     raise RuntimeError("DB_URL is not set. Put it in .env or environment variables.")
-DATABASE_URL = DATABASE_URL.replace("&", "&")
 
 engine = create_engine(
     DATABASE_URL,
@@ -255,46 +266,44 @@ engine = create_engine(
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
+# --------------------------------- ORM MODELS ---------------------------------
+class Order(Base):
+    __tablename__ = "orders"
+    __table_args__ = {"schema": "dbo"}
+    Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Customer_Number: Mapped[int] = mapped_column(Integer)
+    Quantity: Mapped[int] = mapped_column(Integer)
+    Price: Mapped[int] = mapped_column(Integer)
 
-class Order(Base): 
-    __tablename__ = "orders" 
-    __table_args__ = {"schema": "dbo"} 
-    Order_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True) 
-    Customer_Number: Mapped[int] = mapped_column(Integer) 
-    Quantity: Mapped[int] = mapped_column(Integer) 
-    Price: Mapped[int] = mapped_column(Integer) 
+class Customer(Base):
+    __tablename__ = "customers"
+    __table_args__ = {"schema": "dbo"}
+    Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=True)
+    Customer_Address: Mapped[str] = mapped_column(String(50), nullable=True)
+    Contact_Number: Mapped[str] = mapped_column(String(15), nullable=True)
+    Email_Address: Mapped[str] = mapped_column(String(50), nullable=True)
 
-class Customer(Base): 
-    __tablename__ = "customers" 
-    __table_args__ = {"schema": "dbo"} 
-    Customer_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True) 
-    Customer_Name: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Customer_Address: Mapped[str] = mapped_column(String(50), nullable=True) 
-    Contact_Number: Mapped[str] = mapped_column(String(15), nullable=True) 
-    Email_Address: Mapped[str] = mapped_column(String(50), nullable=True) 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = {"schema": "dbo"}
+    User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    User_Name: Mapped[str] = mapped_column(String(100), nullable=True)
+    Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    Email_Address: Mapped[str] = mapped_column(String(255), nullable=True, unique=True)
+    Contact_Number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    Vat_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    Hashed_Pword: Mapped[str] = mapped_column(nullable=True)
+    Is_Active: Mapped[bool] = mapped_column(Boolean, default=True)
+    Role: Mapped[str] = mapped_column(String(50), nullable=True, default="user")
+    TokenVersion: Mapped[int] = mapped_column(Integer, nullable=True, default=1)
 
-class User(Base): 
-    __tablename__ = "users" 
-    __table_args__ = {"schema": "dbo"} 
-    User_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True) 
-    User_Name: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Location_Address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True) 
-    Email_Address: Mapped[str] = mapped_column(String(255), nullable=True, unique=True) 
-    Contact_Number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) 
-    Vat_Number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True) 
-    Hashed_Pword: Mapped[str] = mapped_column(nullable=True) 
-    Is_Active: Mapped[bool] = mapped_column(Boolean, default=True) 
-    Role: Mapped[str] = mapped_column(String(50), nullable=True, default="user") 
-    TokenVersion: Mapped[int] = mapped_column(Integer, nullable=True, default=1) 
-
-# NEW: RefreshToken model
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
     __table_args__ = (
         UniqueConstraint("Fingerprint", name="uq_refresh_tokens_fingerprint"),
         {"schema": "dbo"}
     )
-
     RT_Id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     User_Id: Mapped[int] = mapped_column(Integer, nullable=False)
     Token_Hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -304,53 +313,207 @@ class RefreshToken(Base):
     Is_Revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     TokenVersionAtIssue: Mapped[int] = mapped_column(Integer, nullable=False)
 
-class Invoice(Base): 
-    __tablename__ = "invoices" 
-    __table_args__ = {"schema": "dbo"} 
-    Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True) 
-    Order_Number: Mapped[int] = mapped_column(Integer) 
-    Customer_Number: Mapped[int] = mapped_column(Integer) 
-    Invoice_Date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True) 
-    Invoice_Email: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) 
-    Amount: Mapped[int] = mapped_column(Integer) 
+class Invoice(Base):
+    __tablename__ = "invoices"
+    __table_args__ = {"schema": "dbo"}
+    Invoice_Number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    Order_Number: Mapped[int] = mapped_column(Integer)
+    Customer_Number: Mapped[int] = mapped_column(Integer)
+    Invoice_Date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    Invoice_Email: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    Amount: Mapped[int] = mapped_column(Integer)
 
-class Agreement(Base): 
-    __tablename__ = "agreements" 
-    __table_args__ = {"schema": "dbo"} 
-    Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True) 
-    Customer_Number: Mapped[int] = mapped_column(Integer) 
-    Customer_site: Mapped[int] = mapped_column(Integer) 
-    Your_reference_1: Mapped[int] = mapped_column(Integer) 
-    Telephone_number_1: Mapped[int] = mapped_column(Integer) 
-    customers_order_number: Mapped[int] = mapped_column(Integer) 
-    Agreement_order_type: Mapped[int] = mapped_column(Integer) 
-    Termination_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True) 
-    Line_charge_model: Mapped[int] = mapped_column(Integer) 
-    Address_line_1: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Address_line_2: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Address_line_3: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Address_line_4: Mapped[str] = mapped_column(String(100), nullable=True) 
-    Salesperson: Mapped[str] = mapped_column(String(30), nullable=True) 
-    Minimum_rental_type: Mapped[int] = mapped_column(Integer) 
-    Minimum_order_value: Mapped[int] = mapped_column(Integer) 
-    Currency: Mapped[str] = mapped_column(String(6), nullable=True, default="SR") 
-    Reason_code_created_agreement: Mapped[str] = mapped_column(String(6), nullable=True) 
-    User: Mapped[str] = mapped_column(String(6), nullable=True) 
-    Minimum_hire_period: Mapped[int] = mapped_column(Integer) 
-    Payment_terms: Mapped[str] = mapped_column(String(6), nullable=True) 
-    Price_list: Mapped[str] = mapped_column(String(6), nullable=True) 
-    Reason_code_terminated_agreement: Mapped[str] = mapped_column(String(6), nullable=True) 
-    Project_number: Mapped[str] = mapped_column(String(6), nullable=True) 
+class Agreement(Base):
+    __tablename__ = "agreements"
+    __table_args__ = {"schema": "dbo"}
+    Agreement_number: Mapped[str] = mapped_column(String(7), primary_key=True, nullable=False, unique=True)
+    Customer_Number: Mapped[int] = mapped_column(Integer)
+    Customer_site: Mapped[int] = mapped_column(Integer)
+    Your_reference_1: Mapped[int] = mapped_column(Integer)
+    Telephone_number_1: Mapped[int] = mapped_column(Integer)
+    customers_order_number: Mapped[int] = mapped_column(Integer)
+    Agreement_order_type: Mapped[int] = mapped_column(Integer)
+    Termination_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    Line_charge_model: Mapped[int] = mapped_column(Integer)
+    Address_line_1: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_2: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_3: Mapped[str] = mapped_column(String(100), nullable=True)
+    Address_line_4: Mapped[str] = mapped_column(String(100), nullable=True)
+    Salesperson: Mapped[str] = mapped_column(String(30), nullable=True)
+    Minimum_rental_type: Mapped[int] = mapped_column(Integer)
+    Minimum_order_value: Mapped[int] = mapped_column(Integer)
+    Currency: Mapped[str] = mapped_column(String(6), nullable=True, default="SR")
+    Reason_code_created_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
+    User: Mapped[str] = mapped_column(String(6), nullable=True)
+    Minimum_hire_period: Mapped[int] = mapped_column(Integer)
+    Payment_terms: Mapped[str] = mapped_column(String(6), nullable=True)
+    Price_list: Mapped[str] = mapped_column(String(6), nullable=True)
+    Reason_code_terminated_agreement: Mapped[str] = mapped_column(String(6), nullable=True)
+    Project_number: Mapped[str] = mapped_column(String(6), nullable=True)
 
-# ============================ Session dependency =============================
+# ============================ Session dependency ==============================
 def get_session() -> Iterator[Session]:
     with Session(engine) as session:
         yield session
 
-# ============================ Schemas (Pydantic) =============================
-# ... (unchanged schema functions for orders/customers/users/invoices/agreements) ...
+# ============================ Schemas (Pydantic) ==============================
+class OrderIn(BaseModel):
+    Customer_Number: int
+    Quantity: int
+    Price: int
 
-# ================================ ROUTERS-ENDPOINTS ================================
+class OrderOut(OrderIn):
+    Order_Number: int
+
+def order_out(o: Order) -> OrderOut:
+    return OrderOut(
+        Order_Number=o.Order_Number,
+        Customer_Number=o.Customer_Number,
+        Quantity=o.Quantity,
+        Price=o.Price,
+    )
+
+class CustomerIn(BaseModel):
+    Customer_Name: str
+    Customer_Address: str
+    Contact_Number: str
+    Email_Address: EmailStr
+
+class CustomerOut(CustomerIn):
+    Customer_Number: int
+
+def customer_out(c: Customer) -> CustomerOut:
+    return CustomerOut(
+        Customer_Number=c.Customer_Number,
+        Customer_Name=c.Customer_Name,
+        Customer_Address=c.Customer_Address,
+        Contact_Number=c.Contact_Number,
+        Email_Address=c.Email_Address,
+    )
+
+class UserCreate(BaseModel):
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Password: str = Field(..., min_length=6)
+
+class UserPublic(BaseModel):
+    User_Id: int
+    User_Name: str
+    Location_Address: Optional[str] = None
+    Email_Address: EmailStr
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Is_Active: bool = True
+    Role: Optional[str] = None
+    TokenVersion: Optional[int] = None
+
+def user_out(u: User) -> UserPublic:
+    return UserPublic(
+        User_Id=u.User_Id,
+        User_Name=u.User_Name,
+        Location_Address=u.Location_Address or "",
+        Email_Address=u.Email_Address,
+        Contact_Number=u.Contact_Number or "",
+        Vat_Number=u.Vat_Number or "",
+        Is_Active=bool(u.Is_Active),
+        Role=u.Role,
+        TokenVersion=u.TokenVersion,
+    )
+
+class UserUpdate(BaseModel):
+    User_Name: Optional[str] = None
+    Location_Address: Optional[str] = None
+    Email_Address: Optional[EmailStr] = None
+    Contact_Number: Optional[str] = None
+    Vat_Number: Optional[str] = None
+    Is_Active: Optional[bool] = None
+    Role: Optional[str] = None
+
+class UserPasswordUpdate(BaseModel):
+    Old_Password: str = Field(..., min_length=8)
+    New_Password: str = Field(..., min_length=8)
+
+class InvoiceIn(BaseModel):
+    Order_Number: int
+    Invoice_Date: str
+    Invoice_Email: Optional[str] = None
+    Amount: int
+    Customer_Number: int
+
+class InvoiceOut(InvoiceIn):
+    Invoice_Number: int
+
+def invoice_out(i: Invoice) -> InvoiceOut:
+    return InvoiceOut(
+        Invoice_Number=i.Invoice_Number,
+        Order_Number=i.Order_Number,
+        Invoice_Date=i.Invoice_Date,
+        Invoice_Email=i.Invoice_Email,
+        Amount=i.Amount,
+        Customer_Number=i.Customer_Number,
+    )
+
+class AgreementIn(BaseModel):
+    Agreement_number: str
+    Customer_Number: int
+    Customer_site: int
+    Your_reference_1: int
+    Telephone_number_1: int
+    customers_order_number: int
+    Agreement_order_type: int
+    Termination_date: str
+    Line_charge_model: int
+    Address_line_1: str
+    Address_line_2: str
+    Address_line_3: str
+    Address_line_4: str
+    Salesperson: str
+    Minimum_rental_type: int
+    Minimum_order_value: int
+    Currency: str
+    Reason_code_created_agreement: str
+    User: str
+    Minimum_hire_period: int
+    Payment_terms: str
+    Price_list: str
+    Reason_code_terminated_agreement: str
+    Project_number: str
+
+class AgreementOut(AgreementIn):
+    Agreement_number: str
+
+def agreement_out(a: Agreement) -> AgreementOut:
+    return AgreementOut(
+        Agreement_number=a.Agreement_number,
+        Customer_Number=a.Customer_Number,
+        Customer_site=a.Customer_site,
+        Your_reference_1=a.Your_reference_1,
+        Telephone_number_1=a.Telephone_number_1,
+        customers_order_number=a.customers_order_number,
+        Agreement_order_type=a.Agreement_order_type,
+        Termination_date=a.Termination_date,
+        Line_charge_model=a.Line_charge_model,
+        Address_line_1=a.Address_line_1,
+        Address_line_2=a.Address_line_2,
+        Address_line_3=a.Address_line_3,
+        Address_line_4=a.Address_line_4,
+        Salesperson=a.Salesperson,
+        Minimum_rental_type=a.Minimum_rental_type,
+        Minimum_order_value=a.Minimum_order_value,
+        Currency=a.Currency,
+        Reason_code_created_agreement=a.Reason_code_created_agreement,
+        User=a.User,
+        Minimum_hire_period=a.Minimum_hire_period,
+        Payment_terms=a.Payment_terms,
+        Price_list=a.Price_list,
+        Reason_code_terminated_agreement=a.Reason_code_terminated_agreement,
+        Project_number=a.Project_number,
+    )
+
+# ================================ ROUTERS =====================================
 orders_router = APIRouter(tags=["Orders"])
 responses204 = {204: {"description": "Deleted successfully", "content": {}}}
 
@@ -413,7 +576,7 @@ def create_orders(
     session: Session = Depends(get_session),
     _: User = Depends(lambda: None),
 ):
-    created = []
+    created: List[Order] = []
     for item in payload:
         o = Order(**item.model_dump())
         session.add(o)
@@ -469,12 +632,18 @@ def delete_order(
     session.commit()
     return Response(status_code=204)
 
-# ----------------------------- AUTH (Public) -----------------------------
+# ------------------------------- AUTH (Public) --------------------------------
 auth_router = APIRouter(tags=["Authorization"])
 
 @app.get("/.well-known/jwks.json", include_in_schema=False)
 def jwks():
     return JSONResponse(rs256_keystore.jwks(), headers={"Cache-Control": "public, max-age=300"})
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    refresh_token: Optional[str] = None
+    expires_in: int
 
 @auth_router.post("/token")
 @limiter.limit("3/minute")
@@ -507,11 +676,12 @@ def login_for_access_token(
         pass
 
     scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
+    kid, priv = rs256_keystore.get_active_signing_key()
     access_token = jwt.encode(
         {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
-        rs256_keystore.get_active_signing_key()[1],
+        priv,
         algorithm=JWT_RS256_ALG,
-        headers={"kid": rs256_keystore.get_active_signing_key()[0]},
+        headers={"kid": kid},
     )
     refresh_token_raw = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
     rt = RefreshToken(
@@ -590,21 +760,24 @@ def refresh_access_token(
     session.commit()
 
     scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
+    kid, priv = rs256_keystore.get_active_signing_key()
     new_access = jwt.encode(
         {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
-        rs256_keystore.get_active_signing_key()[1],
+        priv,
         algorithm=JWT_RS256_ALG,
-        headers={"kid": rs256_keystore.get_active_signing_key()[0]},
+        headers={"kid": kid},
     )
     new_refresh = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
-    session.add(RefreshToken(
-        User_Id=user.User_Id,
-        Token_Hash=pwd_context.hash(new_refresh),
-        Fingerprint=hashlib.sha256(new_refresh.encode("utf-8")).hexdigest(),
-        Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS),
-        TokenVersionAtIssue=int(user.TokenVersion or 1),
-        Is_Revoked=False,
-    ))
+    session.add(
+        RefreshToken(
+            User_Id=user.User_Id,
+            Token_Hash=pwd_context.hash(new_refresh),
+            Fingerprint=hashlib.sha256(new_refresh.encode("utf-8")).hexdigest(),
+            Expires_At=datetime.now(timezone.utc) + timedelta(days=REFRESH_EXPIRES_DAYS),
+            TokenVersionAtIssue=int(user.TokenVersion or 1),
+            Is_Revoked=False,
+        )
+    )
     session.commit()
 
     body = Token(access_token=new_access, token_type="bearer", refresh_token=new_refresh, expires_in=TOKEN_EXPIRES_MIN * 60)
@@ -649,11 +822,11 @@ def healthz(session: Session = Depends(get_session)):
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "degraded", "error": str(e)})
 
-# ============================ Okta OIDC (PKCE + JWKS) ==========================
+# ============================ Okta OIDC (PKCE) ================================
 import secrets
-from typing import Dict
+from typing import Dict as _Dict
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, String, BigInteger
+from sqlalchemy import Column, String as SAString, BigInteger
 from sqlalchemy import create_engine as create_engine_okta
 from sqlalchemy.orm import sessionmaker as sessionmaker_okta
 
@@ -663,9 +836,10 @@ OKTA_CLIENT_ID = (os.getenv("OKTA_CLIENT_ID") or "").strip()
 OKTA_CLIENT_SECRET = (os.getenv("OKTA_CLIENT_SECRET") or "").strip()
 OKTA_REDIRECT_URI = (os.getenv("OKTA_REDIRECT_URI") or "").strip()
 OKTA_DEFAULT_SCOPES = (os.getenv("OKTA_DEFAULT_SCOPES", "openid profile email")).strip()
+OKTA_TOKEN_AUTH_METHOD = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()  # basic|post
 
 if not all([OKTA_ISSUER, OKTA_METADATA_URL, OKTA_CLIENT_ID, OKTA_REDIRECT_URI]):
-    logging.warning("Okta env incomplete; /authorize and /callback will fail.")
+    logging.warning("Okta env incomplete; /authorize and /callback will fail.")  # [1](https://autoworldsa-my.sharepoint.com/personal/fernando_losantos_autoworld_com_sa).py)
 
 okta_router = APIRouter(tags=["Okta"])
 
@@ -673,7 +847,6 @@ PKCE_DB_URL = os.getenv("PKCE_DB_URL", "sqlite:///./pkce_state.db")
 STATE_TTL_SEC = int(os.getenv("PKCE_STATE_TTL_SEC", "600"))
 
 BasePKCE = declarative_base()
-
 engine_pkce = (
     create_engine_okta(PKCE_DB_URL, connect_args={"check_same_thread": False})
     if PKCE_DB_URL.strip().lower().startswith('sqlite')
@@ -683,29 +856,26 @@ SessionPKCE = sessionmaker_okta(bind=engine_pkce, autocommit=False, autoflush=Fa
 
 class PKCEState(BasePKCE):
     __tablename__ = "pkce_state"
-    state = Column(String, primary_key=True, index=True)
-    code_verifier = Column(String, nullable=False)
-    nonce = Column(String, nullable=False)
+    state = Column(SAString, primary_key=True, index=True)
+    code_verifier = Column(SAString, nullable=False)
+    nonce = Column(SAString, nullable=False)
     created_at = Column(BigInteger, nullable=False)
 
 BasePKCE.metadata.create_all(bind=engine_pkce)
 
-async def get_oidc_metadata() -> Dict:
+async def get_oidc_metadata() -> _Dict:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(OKTA_METADATA_URL)
         r.raise_for_status()
         return r.json()
 
-async def get_jwks() -> Dict:
+async def get_jwks() -> _Dict:
     meta = await get_oidc_metadata()
     url = meta.get("jwks_uri")
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.json()
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 def _sha256_b64(s: str) -> str:
     return _b64url(hashlib.sha256(s.encode("ascii")).digest())
@@ -744,13 +914,13 @@ async def okta_authorize():
     params = {
         "client_id": OKTA_CLIENT_ID,
         "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,  # includes offline_access and api scopes
+        "scope": OKTA_DEFAULT_SCOPES,  # includes offline_access and custom API scopes
         "redirect_uri": OKTA_REDIRECT_URI,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
-        # Optional, if your AS requires:
+        # Optional audience/resource if required by your AS:
         # "resource": os.getenv("OKTA_AUDIENCE"),
         # or "audience": os.getenv("OKTA_AUDIENCE"),
     }
@@ -765,6 +935,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     rec = pop_pkce_state(state)
     if not rec:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
+
     code_verifier = rec["code_verifier"]
     expected_nonce = rec["nonce"]
 
@@ -780,9 +951,16 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         "client_id": OKTA_CLIENT_ID,
         "code_verifier": code_verifier,
     }
+
     if OKTA_CLIENT_SECRET:
-        auth = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
-        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
+        if OKTA_TOKEN_AUTH_METHOD == "post":
+            # client_secret_post
+            data["client_secret"] = OKTA_CLIENT_SECRET
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        else:
+            # client_secret_basic (default for Web apps)
+            auth = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
     else:
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -804,9 +982,10 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
 
     try:
+        key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
         claims = jwt.decode(
             id_token,
-            next(k for k in jwks.get("keys", []) if k.get("kid") == kid),
+            key,  # python-jose accepts JWK dict directly
             algorithms=["RS256"],
             audience=OKTA_CLIENT_ID,
             issuer=OKTA_ISSUER,
@@ -818,7 +997,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
 
-    # Provision/lookup local user and mint first-party API access token (RS256)
+    # Provision/lookup local user and mint first-party API access token
     email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
     with Session(engine) as s:
         user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
@@ -836,7 +1015,9 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         kid_active, priv = rs256_keystore.get_active_signing_key()
         api_access = jwt.encode(
             {"sub": user.Email_Address, "ver": user.TokenVersion, "scopes": scopes, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRES_MIN)},
-            priv, algorithm=JWT_RS256_ALG, headers={"kid": kid_active}
+            priv,
+            algorithm=JWT_RS256_ALG,
+            headers={"kid": kid_active},
         )
 
     return JSONResponse({
@@ -844,7 +1025,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         "provider": "okta",
         "id_token_claims": claims,
         "access_token": tokens.get("access_token"),      # Okta access token (optional)
-        "api_access_token": api_access,                  # Your API token for calling endpoints
+        "api_access_token": api_access,                  # First-party API token (RS256)
         "refresh_token": tokens.get("refresh_token"),
         "token_type": tokens.get("token_type"),
         "expires_in": tokens.get("expires_in"),
@@ -883,8 +1064,8 @@ async def okta_logout(request: Request):
         data = {"token": okta_refresh, "token_type_hint": "refresh_token", "client_id": OKTA_CLIENT_ID}
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         if OKTA_CLIENT_SECRET:
-            import base64 as _b64
-            headers["Authorization"] = "Basic " + _b64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+            _b = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+            headers["Authorization"] = f"Basic {_b}"
         async with httpx.AsyncClient(timeout=10) as client:
             try:
                 await client.post(revoke_url, data=data, headers=headers)
@@ -892,18 +1073,17 @@ async def okta_logout(request: Request):
                 logging.warning("Okta revocation failed: %s", e)
     return JSONResponse({"ok": True, "logout": logout_url})
 
-# ============================ Mount Routers ==================================
-from security_deps import require_auth, require_scopes, Principal
+# ============================ Mount Routers & Docs ============================
+from security_deps import require_auth, require_scopes, Principal  # present in repo
 
 async def _auth_dep(request: Request) -> Principal:
     auth = request.headers.get("Authorization")
     return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"))
 
-# Protect business routers with the auth dependency
+# Protect business routers
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
 
-# Keep auth and Okta routes public (no dependencies),
-# otherwise the login and OIDC redirect/callback would be blocked.
+# Keep auth and Okta routes public
 app.include_router(auth_router)
 app.include_router(okta_router)
 
