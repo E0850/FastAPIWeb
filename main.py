@@ -1,4 +1,3 @@
-
 # SimpleAPI_SQLAlchemy_version.py
 """
 API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
@@ -20,6 +19,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple, Dict
+
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Depends, HTTPException, status, Query, APIRouter
@@ -30,12 +30,15 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from urllib.parse import urlencode
+
 from sqlalchemy import Boolean, Integer, String, create_engine, select, or_, cast
 from sqlalchemy import DateTime, func, UniqueConstraint
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
 from passlib.context import CryptContext
 from jose import jwt
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -102,11 +105,13 @@ REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
 REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "true").lower() == "true"
-REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax").lower()  # strict|lax|none
+# strict | lax | none
+REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax").lower()
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
+# Disable FastAPI's default /docs so we can guard it ourselves
 app = FastAPI(
     title="API - Swagger UI - Beta Version",
     version="0.1.0",
@@ -114,6 +119,8 @@ app = FastAPI(
         "<h3>Citation/References</h3>"
         "<blockquote>Author: http://www.linkedin.com/in/fernando-losantos-33a746124/</blockquote>"
     ),
+    docs_url=None,     # <— critical: prevents public /docs
+    redoc_url=None,
 )
 
 # Rate limiting
@@ -916,7 +923,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not token_endpoint:
         raise HTTPException(status_code=500, detail="token_endpoint missing")
 
-    # Build base body WITHOUT client_id; we'll add it only when appropriate
+    # Build base body WITHOUT client_id; add only when appropriate
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -927,19 +934,16 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if OKTA_CLIENT_SECRET:
         auth_method = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()
         if auth_method == "post":
-            # client_secret_post → client_id & client_secret in body; NO Authorization header
+            # client_secret_post: client_id & client_secret in body
             data["client_id"] = OKTA_CLIENT_ID
             data["client_secret"] = OKTA_CLIENT_SECRET
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
         else:
-            # client_secret_basic → Authorization: Basic; DO NOT send client_id in body
+            # client_secret_basic: Authorization: Basic, no client_id in body
             basic = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
-            headers = {
-                "Authorization": f"Basic {basic}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            }
+            headers = {"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"}
     else:
-        # Public PKCE (no secret) → include client_id in body; NO Authorization header
+        # Public PKCE (no secret): include client_id in body
         data["client_id"] = OKTA_CLIENT_ID
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -953,12 +957,11 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
 
-    # Provide Okta access token to python-jose to validate at_hash (if present)
-    okta_access = tokens.get("access_token")
-
+    okta_access = tokens.get("access_token")  # provided for at_hash verification
     jwks = await get_jwks()
     header = jwt.get_unverified_header(id_token)
-    kid = header.get("kid"); alg = header.get("alg")
+    kid = header.get("kid")
+    alg = header.get("alg")
     if alg != "RS256":
         raise HTTPException(status_code=400, detail=f"Unsupported alg {alg}, expected RS256")
 
@@ -966,11 +969,11 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         key = next(k for k in jwks.get("keys", []) if k.get("kid") == kid)
         claims = jwt.decode(
             id_token,
-            key,  # python-jose accepts JWK dict directly
+            key,  # JWK dict accepted
             algorithms=["RS256"],
             audience=OKTA_CLIENT_ID,
             issuer=OKTA_ISSUER,
-            access_token=okta_access,  # ensures at_hash check
+            access_token=okta_access,  # ensures at_hash check when present
             options={"require_exp": True, "require_iat": True, "require_aud": True, "require_iss": True},
         )
     except Exception as e:
@@ -979,7 +982,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(status_code=400, detail="Nonce mismatch")
 
-    # Provision/lookup local user and mint first-party API access token
+    # Provision/lookup local user and mint first‑party API access token
     email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
     with Session(engine) as s:
         user = s.scalar(select(User).where(User.Email_Address == (email or "").lower()))
@@ -991,7 +994,9 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
                 Is_Active=True,
                 Hashed_Pword=pwd_context.hash(os.urandom(8)),
             )
-            s.add(user); s.commit(); s.refresh(user)
+            s.add(user)
+            s.commit()
+            s.refresh(user)
 
         scopes = ROLE_TO_SCOPES.get(user.Role or "user", [])
         kid_active, priv = rs256_keystore.get_active_signing_key()
@@ -1002,13 +1007,12 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             headers={"kid": kid_active},
         )
 
-    # Redirect to Swagger UI (/docs-custom) and set secure cookies
     POST_LOGIN_REDIRECT = os.getenv("POST_LOGIN_REDIRECT", "/docs-custom")
     COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
 
     response = RedirectResponse(url=POST_LOGIN_REDIRECT, status_code=302)
 
-    # First-party API token (HTTP-only)
+    # First‑party API token (HTTP‑only)
     response.set_cookie(
         key="api_access_token",
         value=api_access,
@@ -1018,8 +1022,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         max_age=TOKEN_EXPIRES_MIN * 60,
         path="/",
     )
-
-    # Optional: Okta access token (HTTP-only)
+    # Optional: Okta access token (HTTP‑only)
     if tokens.get("access_token"):
         response.set_cookie(
             key="okta_access_token",
@@ -1030,8 +1033,7 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             max_age=tokens.get("expires_in", TOKEN_EXPIRES_MIN * 60),
             path="/",
         )
-
-    # Optional: Okta refresh token (only if offline_access was requested)
+    # Optional: Okta refresh token
     if tokens.get("refresh_token"):
         response.set_cookie(
             key="okta_refresh_token",
@@ -1042,7 +1044,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
             max_age=30 * 24 * 3600,
             path="/",
         )
-
     return response
 
 @okta_router.get("/authz/ready", include_in_schema=False)
@@ -1087,7 +1088,7 @@ async def okta_logout(request: Request):
     return JSONResponse({"ok": True, "logout": logout_url})
 
 # ============================ Mount Routers & Docs ============================
-from security_deps import require_auth, require_scopes, Principal  # <-- cookie fallback lives here
+from security_deps import require_auth, require_scopes, Principal  # cookie fallback lives here
 
 async def _auth_dep(request: Request) -> Principal:
     auth = request.headers.get("Authorization")
@@ -1101,6 +1102,26 @@ app.include_router(auth_router)
 app.include_router(okta_router)
 
 # -------- Guarded Swagger docs: require auth; else redirect to /authorize -----
+@app.get("/docs", include_in_schema=False)
+async def docs(request: Request):
+    try:
+        await require_auth(
+            authorization=request.headers.get("Authorization"),
+            base_url=str(request.base_url).rstrip("/"),
+            request=request,
+        )
+    except HTTPException as e:
+        if e.status_code == 401:
+            return RedirectResponse(url="/authorize", status_code=302)
+        raise
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Docs",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css",
+        swagger_favicon_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/favicon-32x32.png",
+    )
+
 @app.get("/docs-dark", include_in_schema=False)
 async def docs_dark(request: Request):
     try:
@@ -1117,7 +1138,7 @@ async def docs_dark(request: Request):
         openapi_url=app.openapi_url,
         title=f"{app.title} - Docs (Dark)",
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js",
-        swagger_css_url="/static/swagger-dark.css?v=32",
+        swagger_css_url="/static/swagger-dark.css?v=32",  # your custom dark theme
         swagger_favicon_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/favicon-32x32.png",
     )
 
