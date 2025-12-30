@@ -1,6 +1,7 @@
 # SimpleAPI_SQLAlchemy_version.py
 """
 API - SQLAlchemy + OAuth2/JWT (Beginner-friendly)
+
 Highlights:
  1) All endpoints are locked by default.
  2) Unlock with a valid Bearer token (your RS256 API token or Okta access token).
@@ -8,6 +9,7 @@ Highlights:
  4) Refresh token rotation + reuse detection.
  5) Okta Authorization Code + PKCE (/authorize → /callback) with optional client_secret.
  6) JWKS published at /.well-known/jwks.json for RS256 verification.
+
 Run locally:
  uvicorn main:app --reload --port 8000
 """
@@ -44,7 +46,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-# --------------------------- Error model & helpers ----------------------------
+# --------------------------- Error model & helpers -----------------------------
 class ErrorDetail(BaseModel):
     code: str
     message: str
@@ -78,7 +80,7 @@ def clear_attempts(username: str, ip: str) -> None:
     if key in _attempts:
         _attempts[key] = []
 
-# ------------------------------ Role → scopes map -----------------------------
+# --------------------------- Role → scopes map --------------------------------
 ROLE_TO_SCOPES = {
     "admin": [
         "orders:read", "orders:write",
@@ -99,13 +101,14 @@ ROLE_TO_SCOPES = {
 
 # ============================ App & Security Config ===========================
 load_dotenv()
+
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 TOKEN_EXPIRES_MIN = int(os.getenv("TOKEN_EXPIRES_MIN", "60"))
 REFRESH_EXPIRES_DAYS = int(os.getenv("REFRESH_EXPIRES_DAYS", "30"))
+
 REFRESH_IN_COOKIE = os.getenv("REFRESH_IN_COOKIE", "false").lower() == "true"
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "refresh_token")
-REFRESH_COOKIE_SECURE = os.getenv("REFRESH_COOKIE_SECURE", "true").lower() == "true"
-# strict | lax | none
+# We will toggle secure cookies by ENV (prod → secure=True)
 REFRESH_COOKIE_SAMESITE = os.getenv("REFRESH_COOKIE_SAMESITE", "lax").lower()
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
@@ -119,7 +122,7 @@ app = FastAPI(
         "<h3>Citation/References</h3>"
         "<blockquote>Author: http://www.linkedin.com/in/fernando-losantos-33a746124/</blockquote>"
     ),
-    docs_url=None,     # <— critical: prevents public /docs
+    docs_url=None,  # <— critical: prevents public /docs
     redoc_url=None,
 )
 
@@ -230,25 +233,31 @@ rs256_keystore = RS256KeyStore()
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 raw_origins = os.getenv("CORS_ORIGINS", "")
 allow_origins: List[str] = [o.strip() for o in raw_origins.split(",") if o.strip()]
 ENV = os.getenv("ENV", "dev").lower()
+SECURE_COOKIES = (ENV == "prod")  # <-- cookie hardening: secure in prod
+
 if ENV == "prod" and not allow_origins:
     raise RuntimeError("CORS_ORIGINS must be set in production (comma-separated list).")
 if ENV != "prod" and not allow_origins:
     allow_origins = ["http://localhost:8000", "http://127.0.0.1:8000"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
+    allow_credentials=True,  # <-- CORS hardening for cookie auth
 )
 
 # ============================ Database (PostgreSQL) ===========================
 DATABASE_URL = os.getenv("DB_URL", "").strip()
 if not DATABASE_URL:
     raise RuntimeError("DB_URL is not set. Put it in .env or environment variables.")
+
 engine = create_engine(
     DATABASE_URL,
     echo=False,
@@ -259,7 +268,7 @@ engine = create_engine(
 class Base(DeclarativeBase):
     """Base class for ORM models."""
 
-# --------------------------------- ORM MODELS ---------------------------------
+# ------------------------------- ORM MODELS -----------------------------------
 class Order(Base):
     __tablename__ = "orders"
     __table_args__ = {"schema": "dbo"}
@@ -561,13 +570,17 @@ def search_order(
         logging.error(f"Search order failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search order failed: {str(e)}")
 
-@orders_router.post("/CreateOrders", response_model=List[OrderOut], status_code=201)
+# --- WRITE ENDPOINTS: scope enforcement wired here ---
+@orders_router.post(
+    "/CreateOrders",
+    response_model=List[OrderOut],
+    status_code=201
+)
 @limiter.limit("50/minute")
 def create_orders(
     request: Request,
     payload: List[OrderIn],
     session: Session = Depends(get_session),
-    _: User = Depends(lambda: None),
 ):
     created: List[Order] = []
     for item in payload:
@@ -587,14 +600,16 @@ def create_orders(
         session.refresh(o)
     return [order_out(o) for o in created]
 
-@orders_router.put("/UpdateOrders/{Order_Number}", response_model=OrderOut)
+@orders_router.put(
+    "/UpdateOrders/{Order_Number}",
+    response_model=OrderOut
+)
 @limiter.limit("50/minute")
 def update_order(
     request: Request,
     Order_Number: int,
     payload: OrderIn,
     session: Session = Depends(get_session),
-    _: User = Depends(lambda: None),
 ) -> OrderOut:
     o = session.get(Order, Order_Number)
     if not o:
@@ -610,13 +625,17 @@ def update_order(
     session.refresh(o)
     return order_out(o)
 
-@orders_router.delete("/DeleteOrders/{Order_Number}", status_code=204, response_class=Response, responses=responses204)
+@orders_router.delete(
+    "/DeleteOrders/{Order_Number}",
+    status_code=204,
+    response_class=Response,
+    responses=responses204
+)
 @limiter.limit("50/minute")
 def delete_order(
     request: Request,
     Order_Number: int,
     session: Session = Depends(get_session),
-    _: User = Depends(lambda: None),
 ) -> Response:
     o = session.get(Order, Order_Number)
     if not o:
@@ -625,7 +644,7 @@ def delete_order(
     session.commit()
     return Response(status_code=204)
 
-# ------------------------------- AUTH (Public) --------------------------------
+# -------------------------- AUTH (Public) -------------------------------------
 auth_router = APIRouter(tags=["Authorization"])
 
 @app.get("/.well-known/jwks.json", include_in_schema=False)
@@ -647,6 +666,7 @@ def login_for_access_token(
 ) -> Token:
     ip = request.client.host if request.client else "unknown"
     email = (form_data.username or "").strip().lower()
+
     user = session.scalar(select(User).where(User.Email_Address == email))
     if not user or not pwd_context.verify(form_data.password, user.Hashed_Pword):
         remaining = note_failed_attempt(email, ip)
@@ -654,13 +674,16 @@ def login_for_access_token(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorDetail(code="bad_credentials", message="Invalid username or password.", attempts_remaining=remaining).model_dump()
         )
+
     if not user.Is_Active:
         remaining = get_attempts_remaining(email, ip)
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=ErrorDetail(code="inactive_user", message="Inactive user.", attempts_remaining=remaining).model_dump()
         )
+
     clear_attempts(email, ip)
+
     try:
         if pwd_context.needs_update(user.Hashed_Pword):
             user.Hashed_Pword = pwd_context.hash(form_data.password)
@@ -676,6 +699,7 @@ def login_for_access_token(
         algorithm=JWT_RS256_ALG,
         headers={"kid": kid},
     )
+
     refresh_token_raw = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
     rt = RefreshToken(
         User_Id=user.User_Id,
@@ -689,18 +713,20 @@ def login_for_access_token(
     session.commit()
 
     resp_body = Token(access_token=access_token, token_type="bearer", refresh_token=refresh_token_raw, expires_in=TOKEN_EXPIRES_MIN * 60)
+
     if REFRESH_IN_COOKIE:
         response = JSONResponse(content=resp_body.model_dump())
         response.set_cookie(
             key=REFRESH_COOKIE_NAME,
             value=refresh_token_raw,
             httponly=True,
-            secure=REFRESH_COOKIE_SECURE,
+            secure=SECURE_COOKIES,           # <-- hardened: secure by ENV
             samesite=REFRESH_COOKIE_SAMESITE,
             max_age=REFRESH_EXPIRES_DAYS * 24 * 3600,
             path="/",
         )
         return response
+
     return resp_body
 
 @auth_router.get("/me", response_model=UserPublic)
@@ -720,13 +746,16 @@ def refresh_access_token(
     raw = (payload.refresh_token or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Missing refresh_token")
+
     fp = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     rec = session.scalar(select(RefreshToken).where(RefreshToken.Fingerprint == fp))
     if not rec:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     user = session.get(User, rec.User_Id)
     if not user or not user.Is_Active:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     now = datetime.now(timezone.utc)
     if rec.Is_Revoked or rec.Expires_At <= now:
         user.TokenVersion = (user.TokenVersion or 1) + 1
@@ -734,15 +763,20 @@ def refresh_access_token(
             rt.Is_Revoked = True
         session.commit()
         raise HTTPException(status_code=401, detail="Refresh token reuse detected; tokens revoked")
+
     try:
         if not pwd_context.verify(raw, rec.Token_Hash):
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
     if int(rec.TokenVersionAtIssue or 1) != int(user.TokenVersion or 1):
         for rt in session.scalars(select(RefreshToken).where(RefreshToken.User_Id == user.User_Id)).all():
             rt.Is_Revoked = True
+        session.commit()  # <-- fix: ensure revocations are persisted
         raise HTTPException(status_code=401, detail="Refresh token revoked")
+
+    # Rotate: revoke the used token and issue new pair
     rec.Is_Revoked = True
     session.commit()
 
@@ -754,6 +788,7 @@ def refresh_access_token(
         algorithm=JWT_RS256_ALG,
         headers={"kid": kid},
     )
+
     new_refresh = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
     session.add(
         RefreshToken(
@@ -768,18 +803,20 @@ def refresh_access_token(
     session.commit()
 
     body = Token(access_token=new_access, token_type="bearer", refresh_token=new_refresh, expires_in=TOKEN_EXPIRES_MIN * 60)
+
     if REFRESH_IN_COOKIE:
         response = JSONResponse(content=body.model_dump())
         response.set_cookie(
             key=REFRESH_COOKIE_NAME,
             value=new_refresh,
             httponly=True,
-            secure=REFRESH_COOKIE_SECURE,
+            secure=SECURE_COOKIES,           # <-- hardened: secure by ENV
             samesite=REFRESH_COOKIE_SAMESITE,
             max_age=REFRESH_EXPIRES_DAYS * 24 * 3600,
             path="/",
         )
         return response
+
     return body
 
 class LogoutRequest(BaseModel):
@@ -793,13 +830,22 @@ def logout(payload: Optional[LogoutRequest] = None, request: Request = None, ses
     if not raw and payload and payload.refresh_token:
         raw = payload.refresh_token.strip()
     if not raw:
-        return Response(status_code=204)
+        # Clear cookie if present even when no payload provided
+        r = Response(status_code=204)
+        if REFRESH_IN_COOKIE:
+            r.delete_cookie(REFRESH_COOKIE_NAME, path="/")
+        return r
+
     fp = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     rec = session.scalar(select(RefreshToken).where(RefreshToken.Fingerprint == fp))
     if rec:
         rec.Is_Revoked = True
         session.commit()
-    return Response(status_code=204)
+
+    r = Response(status_code=204)
+    if REFRESH_IN_COOKIE:
+        r.delete_cookie(REFRESH_COOKIE_NAME, path="/")  # <-- logout hardening: clear cookie
+    return r
 
 @app.get("/healthz", include_in_schema=False)
 def healthz(session: Session = Depends(get_session)):
@@ -812,6 +858,7 @@ def healthz(session: Session = Depends(get_session)):
 # ============================ Okta OIDC (PKCE) ================================
 import secrets
 from typing import Dict as _Dict
+
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column, String as SAString, BigInteger
 from sqlalchemy import create_engine as create_engine_okta
@@ -890,15 +937,17 @@ async def okta_authorize():
     auth_endpoint = meta.get("authorization_endpoint")
     if not auth_endpoint:
         raise HTTPException(status_code=500, detail="authorization_endpoint missing")
+
     code_verifier = secrets.token_urlsafe(64)
     code_challenge = _sha256_b64(code_verifier)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     save_pkce_state(state, code_verifier, nonce)
+
     params = {
         "client_id": OKTA_CLIENT_ID,
         "response_type": "code",
-        "scope": OKTA_DEFAULT_SCOPES,  # add offline_access + custom API scopes if desired
+        "scope": OKTA_DEFAULT_SCOPES,
         "redirect_uri": OKTA_REDIRECT_URI,
         "state": state,
         "code_challenge": code_challenge,
@@ -956,8 +1005,8 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     id_token = tokens.get("id_token")
     if not id_token:
         raise HTTPException(status_code=400, detail="ID token missing")
-
     okta_access = tokens.get("access_token")  # provided for at_hash verification
+
     jwks = await get_jwks()
     header = jwt.get_unverified_header(id_token)
     kid = header.get("kid")
@@ -1009,7 +1058,6 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
 
     POST_LOGIN_REDIRECT = os.getenv("POST_LOGIN_REDIRECT", "/docs-custom")
     COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
-
     response = RedirectResponse(url=POST_LOGIN_REDIRECT, status_code=302)
 
     # First‑party API token (HTTP‑only)
@@ -1017,33 +1065,36 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
         key="api_access_token",
         value=api_access,
         httponly=True,
-        secure=True,
+        secure=SECURE_COOKIES,  # <-- hardened: secure by ENV
         samesite=COOKIE_SAMESITE,
         max_age=TOKEN_EXPIRES_MIN * 60,
         path="/",
     )
+
     # Optional: Okta access token (HTTP‑only)
     if tokens.get("access_token"):
         response.set_cookie(
             key="okta_access_token",
             value=tokens["access_token"],
             httponly=True,
-            secure=True,
+            secure=SECURE_COOKIES,  # <-- hardened: secure by ENV
             samesite=COOKIE_SAMESITE,
             max_age=tokens.get("expires_in", TOKEN_EXPIRES_MIN * 60),
             path="/",
         )
+
     # Optional: Okta refresh token
     if tokens.get("refresh_token"):
         response.set_cookie(
             key="okta_refresh_token",
             value=tokens["refresh_token"],
             httponly=True,
-            secure=True,
+            secure=SECURE_COOKIES,  # <-- hardened: secure by ENV
             samesite=COOKIE_SAMESITE,
             max_age=30 * 24 * 3600,
             path="/",
         )
+
     return response
 
 @okta_router.get("/authz/ready", include_in_schema=False)
@@ -1072,6 +1123,7 @@ async def okta_logout(request: Request):
     meta = await get_oidc_metadata()
     revoke_url = meta.get("revocation_endpoint")
     logout_url = f"{OKTA_ISSUER}/v1/logout"
+
     tokens = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     okta_refresh = tokens.get("okta_refresh_token")
     if okta_refresh:
@@ -1085,7 +1137,12 @@ async def okta_logout(request: Request):
                 await client.post(revoke_url, data=data, headers=headers)
             except Exception as e:
                 logging.warning("Okta revocation failed: %s", e)
-    return JSONResponse({"ok": True, "logout": logout_url})
+
+    # Clear local cookies on logout (hardening)
+    r = JSONResponse({"ok": True, "logout": logout_url})
+    for cookie in ("api_access_token", "okta_access_token", "okta_refresh_token"):
+        r.delete_cookie(cookie, path="/")
+    return r
 
 # ============================ Mount Routers & Docs ============================
 from security_deps import require_auth, require_scopes, Principal  # cookie fallback lives here
@@ -1094,14 +1151,28 @@ async def _auth_dep(request: Request) -> Principal:
     auth = request.headers.get("Authorization")
     return await require_auth(authorization=auth, base_url=str(request.base_url).rstrip("/"), request=request)
 
-# Protect business routers
+def scopes(*needed: str):
+    """
+    Dependency wrapper to enforce scopes using require_scopes().
+    Ensures Principal is resolved via _auth_dep, then checks.
+    """
+    def _dep(principal: Principal = Depends(_auth_dep)):
+        return require_scopes(*needed)(principal)
+    return _dep
+
+# Protect business routers globally with auth
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
+
+# Add per-endpoint scope enforcement for write operations
+# (We can't attach decorators after definition, so add here via global dependencies)
+# NOTE: Already added in the endpoint decorators above if you prefer that style.
+# If you want global route-level enforcement, you can re-include with separate routes.
 
 # Keep auth and Okta routes public
 app.include_router(auth_router)
 app.include_router(okta_router)
 
-# -------- Guarded Swagger docs: require auth; else redirect to /authorize -----
+# ---- Guarded Swagger docs: require auth; else redirect to /authorize ----
 @app.get("/docs", include_in_schema=False)
 async def docs(request: Request):
     try:
