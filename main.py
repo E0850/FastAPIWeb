@@ -928,6 +928,7 @@ async def okta_authorize():
     logging.info("Okta authorize initiated")
     return RedirectResponse(url, status_code=302)
 
+
 @okta_router.get("/callback")
 async def okta_callback(code: Optional[str] = None, state: Optional[str] = None):
     if not code or not state:
@@ -944,24 +945,31 @@ async def okta_callback(code: Optional[str] = None, state: Optional[str] = None)
     if not token_endpoint:
         raise HTTPException(status_code=500, detail="token_endpoint missing")
 
+    # Build base body WITHOUT client_id; we'll add it only when appropriate
     data = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": OKTA_REDIRECT_URI,
-        "client_id": OKTA_CLIENT_ID,
         "code_verifier": code_verifier,
     }
 
     if OKTA_CLIENT_SECRET:
-        if OKTA_TOKEN_AUTH_METHOD == "post":
-            # client_secret_post
+        auth_method = (os.getenv("OKTA_TOKEN_AUTH_METHOD") or "basic").lower()
+        if auth_method == "post":
+            # client_secret_post → put BOTH client_id and client_secret in the body; NO Authorization header
+            data["client_id"] = OKTA_CLIENT_ID
             data["client_secret"] = OKTA_CLIENT_SECRET
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
         else:
-            # client_secret_basic (default for Web apps)
-            auth = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
-            headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
+            # client_secret_basic (default for Web apps) → Authorization: Basic; DO NOT send client_id in the body
+            basic = base64.b64encode(f"{OKTA_CLIENT_ID}:{OKTA_CLIENT_SECRET}".encode()).decode()
+            headers = {
+                "Authorization": f"Basic {basic}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
     else:
+        # Public PKCE (no secret) → include client_id in the body; NO Authorization header
+        data["client_id"] = OKTA_CLIENT_ID
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     async with httpx.AsyncClient(timeout=10) as client:
