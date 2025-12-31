@@ -517,6 +517,654 @@ def agreement_out(a: Agreement) -> AgreementOut:
     )
 
 # ================================ ROUTERS =====================================
+
+
+# customers
+customers_router = APIRouter(tags=["Customers"])  
+
+@customers_router.get("/GetCustomer/{Customer_Number}", response_model=CustomerOut)
+@limiter.limit("50/minute")
+def get_customer(
+    request: Request,
+    Customer_Number: int,
+    session: Session = Depends(get_session),
+) -> CustomerOut:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer_out(c)
+
+@customers_router.get("/ListCustomers", response_model=List[CustomerOut])
+@limiter.limit("50/minute")
+def list_customers(
+    request: Request,
+    Customer_Number: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[CustomerOut]:
+    stmt = select(Customer)
+    if Customer_Number is not None:
+        stmt = stmt.where(Customer.Customer_Number == Customer_Number)
+    stmt = stmt.order_by(Customer.Customer_Number).limit(limit).offset(offset)
+    return [customer_out(c) for c in session.scalars(stmt).all()]
+
+@customers_router.get("/SearchCustomer", response_model=List[CustomerOut])
+@limiter.limit("50/minute")
+def search_customer(
+    request: Request,
+    SQRY: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[CustomerOut]:
+    try:
+        stmt = select(Customer)
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(
+                or_(
+                    cast(Customer.Customer_Number, String).ilike(search_term),
+                    cast(Customer.Customer_Name, String).ilike(search_term),
+                    cast(Customer.Customer_Address, String).ilike(search_term),
+                    cast(Customer.Contact_Number, String).ilike(search_term),
+                    cast(Customer.Email_Address, String).ilike(search_term),
+                )
+            )
+        stmt = stmt.order_by(Customer.Customer_Number).limit(limit).offset(offset)
+        results = session.scalars(stmt).all()
+        return [customer_out(c) for c in results]
+    except Exception as e:
+        logging.error(f"Search customer failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search customer failed: {str(e)}")
+
+from fastapi import Depends as _Depends  # alias used for placeholder deps
+
+@customers_router.post(
+    "/CreateCustomers",
+    response_model=List[CustomerOut],
+    status_code=201,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def create_customer(
+    request: Request,
+    payload: List[CustomerIn],
+    session: Session = Depends(get_session),
+):
+    created: List[Customer] = []
+    for item in payload:
+        c = Customer(**item.model_dump())
+        session.add(c)
+        created.append(c)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Customer already exists")
+    except Exception as e:
+        session.rollback()
+        logging.exception("Create customer failed")
+        raise HTTPException(status_code=500, detail=f"Create customer failed: {e}")
+    for c in created:
+        session.refresh(c)
+    return [customer_out(c) for c in created]
+
+@customers_router.put(
+    "/UpdateCustomers/{Customer_Number}",
+    response_model=CustomerOut,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def update_customer(
+    request: Request,
+    Customer_Number: int,
+    payload: CustomerIn,
+    session: Session = Depends(get_session),
+) -> CustomerOut:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    c.Customer_Name = payload.Customer_Name
+    c.Customer_Address = payload.Customer_Address
+    c.Contact_Number = payload.Contact_Number
+    c.Email_Address = payload.Email_Address
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Customer already exists")
+    session.refresh(c)
+    return customer_out(c)
+
+@customers_router.delete(
+    "/DeleteCustomers/{Customer_Number}",
+    status_code=204,
+    response_class=Response,
+    responses=responses204,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def delete_customer(
+    request: Request,
+    Customer_Number: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    c = session.get(Customer, Customer_Number)
+    if not c:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    session.delete(c)
+    session.commit()
+    return Response(status_code=204)
+
+
+
+# invoices
+invoices_router = APIRouter(tags=["Invoices"])  
+
+@invoices_router.get("/GetInvoice/{Invoice_Number}", response_model=InvoiceOut)
+@limiter.limit("50/minute")
+def get_invoice(
+    request: Request,
+    Invoice_Number: int,
+    session: Session = Depends(get_session),
+) -> InvoiceOut:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return invoice_out(i)
+
+@invoices_router.get("/ListInvoices", response_model=List[InvoiceOut])
+@limiter.limit("50/minute")
+def list_invoices(
+    request: Request,
+    invoice_number: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[InvoiceOut]:
+    stmt = select(Invoice)
+    if invoice_number is not None:
+        stmt = stmt.where(Invoice.Invoice_Number == invoice_number)
+    stmt = stmt.order_by(Invoice.Invoice_Number).limit(limit).offset(offset)
+    return [invoice_out(i) for i in session.scalars(stmt).all()]
+
+@invoices_router.get("/SearchInvoice", response_model=List[InvoiceOut])
+@limiter.limit("50/minute")
+def search_invoice(
+    request: Request,
+    SQRY: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[InvoiceOut]:
+    try:
+        stmt = select(Invoice)
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(
+                or_(
+                    cast(Invoice.Invoice_Number, String).ilike(search_term),
+                    cast(Invoice.Customer_Number, String).ilike(search_term),
+                    cast(Invoice.Order_Number, String).ilike(search_term),
+                    cast(Invoice.Invoice_Date, String).ilike(search_term),
+                    cast(Invoice.Invoice_Email, String).ilike(search_term),
+                    cast(Invoice.Amount, String).ilike(search_term),
+                )
+            )
+        stmt = stmt.order_by(Invoice.Invoice_Number).limit(limit).offset(offset)
+        results = session.scalars(stmt).all()
+        return [invoice_out(i) for i in results]
+    except Exception as e:
+        logging.error(f"Search invoice failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search invoice failed: {str(e)}")
+
+from fastapi import Depends as _Depends
+
+@invoices_router.post(
+    "/CreateInvoices",
+    response_model=List[InvoiceOut],
+    status_code=201,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def create_invoices(
+    request: Request,
+    payload: List[InvoiceIn],
+    session: Session = Depends(get_session),
+):
+    created: List[Invoice] = []
+    for item in payload:
+        i = Invoice(**item.model_dump())
+        session.add(i)
+        created.append(i)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Invoice already exists")
+    except Exception as e:
+        session.rollback()
+        logging.exception("Create invoice failed")
+        raise HTTPException(status_code=500, detail=f"Create invoice failed: {e}")
+    for i in created:
+        session.refresh(i)
+    return [invoice_out(i) for i in created]
+
+@invoices_router.put(
+    "/UpdateInvoices/{Invoice_Number}",
+    response_model=InvoiceOut,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def update_invoice(
+    request: Request,
+    Invoice_Number: int,
+    payload: InvoiceIn,
+    session: Session = Depends(get_session),
+) -> InvoiceOut:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    i.Order_Number = payload.Order_Number
+    i.Invoice_Date = payload.Invoice_Date
+    i.Invoice_Email = payload.Invoice_Email
+    i.Amount = payload.Amount
+    i.Customer_Number = payload.Customer_Number
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Invoice already exists")
+    session.refresh(i)
+    return invoice_out(i)
+
+@invoices_router.delete(
+    "/DeleteInvoices/{Invoice_Number}",
+    status_code=204,
+    response_class=Response,
+    responses=responses204,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def delete_invoice(
+    request: Request,
+    Invoice_Number: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    i = session.get(Invoice, Invoice_Number)
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    session.delete(i)
+    session.commit()
+    return Response(status_code=204)
+
+
+
+# agreements
+agreements_router = APIRouter(tags=["Agreements"])  
+
+@agreements_router.get("/GetAgreement/{Agreement_number}", response_model=AgreementOut)
+@limiter.limit("50/minute")
+def get_agreement(
+    request: Request,
+    Agreement_number: str,
+    session: Session = Depends(get_session),
+) -> AgreementOut:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    return agreement_out(a)
+
+@agreements_router.get("/ListAgreements", response_model=List[AgreementOut])
+@limiter.limit("50/minute")
+def list_agreements(
+    request: Request,
+    Agreement_number: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[AgreementOut]:
+    stmt = select(Agreement)
+    if Agreement_number is not None:
+        stmt = stmt.where(Agreement.Agreement_number == Agreement_number)
+    stmt = stmt.order_by(Agreement.Agreement_number).limit(limit).offset(offset)
+    return [agreement_out(a) for a in session.scalars(stmt).all()]
+
+@agreements_router.get("/SearchAgreements", response_model=List[AgreementOut])
+@limiter.limit("50/minute")
+def search_agreements(
+    request: Request,
+    SQRY: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[AgreementOut]:
+    try:
+        stmt = select(Agreement)
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(
+                or_(
+                    Agreement.Agreement_number.ilike(search_term),
+                    cast(Agreement.Customer_Number, String).ilike(search_term),
+                    cast(Agreement.Customer_site, String).ilike(search_term),
+                    cast(Agreement.Your_reference_1, String).ilike(search_term),
+                    cast(Agreement.Telephone_number_1, String).ilike(search_term),
+                    cast(Agreement.customers_order_number, String).ilike(search_term),
+                    cast(Agreement.Agreement_order_type, String).ilike(search_term),
+                    Agreement.Termination_date.ilike(search_term),
+                    cast(Agreement.Line_charge_model, String).ilike(search_term),
+                    Agreement.Address_line_1.ilike(search_term),
+                    Agreement.Address_line_2.ilike(search_term),
+                    Agreement.Address_line_3.ilike(search_term),
+                    Agreement.Address_line_4.ilike(search_term),
+                    Agreement.Salesperson.ilike(search_term),
+                    cast(Agreement.Minimum_rental_type, String).ilike(search_term),
+                    cast(Agreement.Minimum_order_value, String).ilike(search_term),
+                    Agreement.Currency.ilike(search_term),
+                    Agreement.Reason_code_created_agreement.ilike(search_term),
+                    Agreement.User.ilike(search_term),
+                    cast(Agreement.Minimum_hire_period, String).ilike(search_term),
+                    Agreement.Payment_terms.ilike(search_term),
+                    Agreement.Price_list.ilike(search_term),
+                    Agreement.Reason_code_terminated_agreement.ilike(search_term),
+                    Agreement.Project_number.ilike(search_term),
+                )
+            )
+        stmt = stmt.order_by(Agreement.Agreement_number).limit(limit).offset(offset)
+        results = session.scalars(stmt).all()
+        return [agreement_out(a) for a in results]
+    except Exception as e:
+        logging.error(f"Search agreement failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search agreement failed: {str(e)}")
+
+from fastapi import Depends as _Depends
+
+@agreements_router.post(
+    "/CreateAgreements",
+    response_model=List[AgreementOut],
+    status_code=201,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def create_agreement(
+    request: Request,
+    payload: List[AgreementIn],
+    session: Session = Depends(get_session),
+):
+    created: List[Agreement] = []
+    for item in payload:
+        a = Agreement(**item.model_dump())
+        session.add(a)
+        created.append(a)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Agreement already exists")
+    except Exception as e:
+        session.rollback()
+        logging.exception("Create agreement failed")
+        raise HTTPException(status_code=500, detail=f"Agreement create failed: {e}")
+    for a in created:
+        session.refresh(a)
+    return [agreement_out(a) for a in created]
+
+@agreements_router.put(
+    "/UpdateAgreements/{Agreement_number}",
+    response_model=AgreementOut,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def update_agreement(
+    request: Request,
+    Agreement_number: str,
+    payload: AgreementIn,
+    session: Session = Depends(get_session),
+) -> AgreementOut:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    # Map fields
+    a.Customer_Number = payload.Customer_Number
+    a.Customer_site = payload.Customer_site
+    a.Your_reference_1 = payload.Your_reference_1
+    a.Telephone_number_1 = payload.Telephone_number_1
+    a.customers_order_number = payload.customers_order_number
+    a.Agreement_order_type = payload.Agreement_order_type
+    a.Termination_date = payload.Termination_date
+    a.Line_charge_model = payload.Line_charge_model
+    a.Address_line_1 = payload.Address_line_1
+    a.Address_line_2 = payload.Address_line_2
+    a.Address_line_3 = payload.Address_line_3
+    a.Address_line_4 = payload.Address_line_4
+    a.Salesperson = payload.Salesperson
+    a.Minimum_rental_type = payload.Minimum_rental_type
+    a.Minimum_order_value = payload.Minimum_order_value
+    a.Currency = payload.Currency
+    a.Reason_code_created_agreement = payload.Reason_code_created_agreement
+    a.User = payload.User
+    a.Minimum_hire_period = payload.Minimum_hire_period
+    a.Payment_terms = payload.Payment_terms
+    a.Price_list = payload.Price_list
+    a.Reason_code_terminated_agreement = payload.Reason_code_terminated_agreement
+    a.Project_number = payload.Project_number
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Agreement already exists")
+    session.refresh(a)
+    return agreement_out(a)
+
+@agreements_router.delete(
+    "/DeleteAgreement/{Agreement_number}",
+    status_code=204,
+    response_class=Response,
+    responses=responses204,
+    dependencies=[_Depends(lambda principal=_Depends: None)],  # replaced below
+)
+@limiter.limit("50/minute")
+def delete_agreement(
+    request: Request,
+    Agreement_number: str,
+    session: Session = Depends(get_session),
+) -> Response:
+    a = session.get(Agreement, Agreement_number)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    session.delete(a)
+    session.commit()
+    return Response(status_code=204)
+
+
+
+# Users
+users_router = APIRouter(tags=["Users"])  
+
+# Helpers for users
+
+def get_user_by_email(session: Session, email: str) -> Optional[User]:
+    return session.scalar(select(User).where(User.Email_Address == email))
+
+
+def revoke_all_user_refresh_tokens(session: Session, user: User):
+    for rt in session.scalars(select(RefreshToken).where(RefreshToken.User_Id == user.User_Id)).all():
+        rt.Is_Revoked = True
+    session.commit()
+
+@users_router.get("/GetUser/{email}", response_model=UserPublic)
+@limiter.limit("50/minute")
+def get_user(
+    request: Request,
+    email: str,
+    session: Session = Depends(get_session),
+) -> UserPublic:
+    normalized_email = email.strip().lower()
+    u = session.scalar(select(User).where(User.Email_Address == normalized_email))
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user_out(u)
+
+@users_router.get("/ListUsers", response_model=List[UserPublic])
+@limiter.limit("50/minute")
+def list_users(
+    request: Request,
+    email: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[UserPublic]:
+    stmt = select(User)
+    if email:
+        stmt = stmt.where(User.Email_Address == email.strip().lower())
+    stmt = stmt.order_by(User.Email_Address).limit(limit).offset(offset)
+    return [user_out(u) for u in session.scalars(stmt).all()]
+
+@users_router.get("/SearchUser", response_model=List[UserPublic])
+@limiter.limit("50/minute")
+def search_user(
+    request: Request,
+    SQRY: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> List[UserPublic]:
+    try:
+        stmt = select(User)
+        if SQRY:
+            search_term = f"%{SQRY}%"
+            stmt = stmt.where(
+                or_(
+                    cast(User.Email_Address, String).ilike(search_term),
+                    cast(User.User_Name, String).ilike(search_term),
+                    cast(User.Location_Address, String).ilike(search_term),
+                    cast(User.Contact_Number, String).ilike(search_term),
+                    cast(User.Vat_Number, String).ilike(search_term),
+                    cast(User.Hashed_Pword, String).ilike(search_term),
+                    cast(User.Role, String).ilike(search_term),
+                )
+            )
+        stmt = stmt.order_by(User.Email_Address).limit(limit).offset(offset)
+        results = session.scalars(stmt).all()
+        return [user_out(u) for u in results]
+    except Exception as e:
+        logging.error(f"Search user failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search user failed: {str(e)}")
+
+@users_router.post("/CreateUsers", response_model=UserPublic, status_code=201, dependencies=[Depends(scopes('users:manage'))])
+@limiter.limit("50/minute")
+def create_user(
+    request: Request,
+    payload: UserCreate,
+    session: Session = Depends(get_session),
+):
+    data = payload.model_dump()
+    email = data["Email_Address"].strip().lower()
+    if get_user_by_email(session, email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    hashed = pwd_context.hash(data.pop("Password"))
+    u = User(
+        User_Name=data["User_Name"],
+        Location_Address=data.get("Location_Address"),
+        Email_Address=email,
+        Contact_Number=data.get("Contact_Number"),
+        Vat_Number=data.get("Vat_Number"),
+        Hashed_Pword=hashed,
+    )
+    session.add(u)
+    session.commit()
+    session.refresh(u)
+    return user_out(u)
+
+@users_router.put("/UpdateUsers/{email}", response_model=UserPublic, dependencies=[Depends(scopes('users:manage'))])
+@limiter.limit("50/minute")
+def update_user(
+    request: Request,
+    email: str,
+    payload: UserUpdate,
+    session: Session = Depends(get_session),
+) -> UserPublic:
+    normalized_email = email.strip().lower()
+    u = get_user_by_email(session, normalized_email)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.Email_Address is not None:
+        new_email = payload.Email_Address.strip().lower()
+        if new_email != normalized_email:
+            existing = session.scalar(
+                select(User).where(User.Email_Address == new_email, User.User_Id != u.User_Id)
+            )
+            if existing:
+                raise HTTPException(status_code=409, detail="Email already exists")
+            u.Email_Address = new_email
+    if payload.User_Name is not None:
+        u.User_Name = payload.User_Name
+    if payload.Location_Address is not None:
+        u.Location_Address = payload.Location_Address
+    if payload.Contact_Number is not None:
+        u.Contact_Number = payload.Contact_Number
+    if payload.Vat_Number is not None:
+        u.Vat_Number = payload.Vat_Number
+    if payload.Is_Active is not None:
+        u.Is_Active = payload.Is_Active
+    if payload.Role is not None:
+        u.Role = payload.Role
+    session.commit()
+    session.refresh(u)
+    return user_out(u)
+
+@users_router.put("/UpdatePassword/{email}", status_code=204, dependencies=[Depends(scopes('users:manage'))])
+@limiter.limit("50/minute")
+def update_password(
+    request: Request,
+    email: str,
+    payload: UserPasswordUpdate,
+    session: Session = Depends(get_session),
+):
+    u = get_user_by_email(session, email.strip().lower())
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not pwd_context.verify(payload.Old_Password, u.Hashed_Pword):
+        raise HTTPException(status_code=400, detail="Old password incorrect")
+    u.Hashed_Pword = pwd_context.hash(payload.New_Password)
+    u.TokenVersion = (u.TokenVersion or 1) + 1
+    revoke_all_user_refresh_tokens(session, u)
+    session.commit()
+    return Response(status_code=204)
+
+@users_router.delete("/DeleteUsers/{email}", status_code=204, response_class=Response, responses=responses204, dependencies=[Depends(scopes('users:manage'))])
+@limiter.limit("50/minute")
+def delete_user(
+    request: Request,
+    email: str,
+    session: Session = Depends(get_session),
+) -> Response:
+    normalized_email = email.strip().lower()
+    u = get_user_by_email(session, normalized_email)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    revoke_all_user_refresh_tokens(session, u)
+    session.delete(u)
+    session.commit()
+    return Response(status_code=204)
+
+@users_router.post("/RevokeTokens/{email}", status_code=204, dependencies=[Depends(scopes('users:manage'))])
+@limiter.limit("50/minute")
+def revoke_tokens_by_email(
+    request: Request,
+    email: str,
+    session: Session = Depends(get_session),
+):
+    u = get_user_by_email(session, email.strip().lower())
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    u.TokenVersion = (u.TokenVersion or 1) + 1
+    revoke_all_user_refresh_tokens(session, u)
+    session.commit()
+    return Response(status_code=204)
+
 orders_router = APIRouter(tags=["Orders"])
 responses204 = {204: {"description": "Deleted successfully", "content": {}}}
 
@@ -1177,6 +1825,25 @@ WRITE_DEPS = {
 # Protect business routers globally with auth
 app.include_router(orders_router, dependencies=[Depends(_auth_dep)])
 
+
+
+app.include_router(customers_router, dependencies=[Depends(_auth_dep)])
+app.include_router(invoices_router, dependencies=[Depends(_auth_dep)])
+app.include_router(agreements_router, dependencies=[Depends(_auth_dep)])
+app.include_router(users_router, dependencies=[Depends(_auth_dep)])
+
+# Per-endpoint scope enforcement via WRITE_DEPS for business routers
+customers_router.routes[-3].dependencies = [WRITE_DEPS["customers"]]  # CreateCustomers
+customers_router.routes[-2].dependencies = [WRITE_DEPS["customers"]]  # UpdateCustomers
+customers_router.routes[-1].dependencies = [WRITE_DEPS["customers"]]  # DeleteCustomers
+
+invoices_router.routes[-3].dependencies = [WRITE_DEPS["invoices"]]   # CreateInvoices
+invoices_router.routes[-2].dependencies = [WRITE_DEPS["invoices"]]   # UpdateInvoices
+invoices_router.routes[-1].dependencies = [WRITE_DEPS["invoices"]]   # DeleteInvoices
+
+agreements_router.routes[-3].dependencies = [WRITE_DEPS["agreements"]]  # CreateAgreements
+agreements_router.routes[-2].dependencies = [WRITE_DEPS["agreements"]]  # UpdateAgreements
+agreements_router.routes[-1].dependencies = [WRITE_DEPS["agreements"]]  # DeleteAgreement
 # Apply per-endpoint scope enforcement (Orders)
 # Replace placeholder deps defined above in the endpoint decorators:
 orders_router.routes[-3].dependencies = [WRITE_DEPS["orders"]]  # CreateOrders
