@@ -1,16 +1,14 @@
-
 # Combined API (main_combined.py)
 """
 API - SQLAlchemy + OAuth2/JWT + Refresh tokens + Okta (Authorization Code + PKCE)
 
-This file merges and harmonizes the working parts from both uploaded files:
-- Database models & Pydantic schemas (Orders, Customers, Invoices, Agreements, Users, RefreshToken)
+Single-file deployment created by merging working parts from your two versions.
+- Orders, Customers, Invoices, Agreements, Users routers
 - RS256 keystore + /.well-known/jwks.json
-- OAuth2 Password login (/token) issuing RS256 access tokens
-- Refresh rotation & reuse detection (/token/refresh, /logout) with optional cookie delivery
-- Scope-based write protection for business routers
-- Okta OIDC (/authorize -> /callback) with nonce/PKCE and optional Basic or POST client auth
-- Guarded Swagger UI (/docs, /docs-dark, /docs-custom)
+- OAuth2 Password login (/token), refresh rotation & reuse detection (/token/refresh, /logout)
+- Scope + role checks implemented locally (no external security_deps)
+- Okta Authorization Code + PKCE (/authorize -> /callback) with nonce & JWKS verify
+- Guarded Swagger UI
 
 Run locally:
  uvicorn main_combined:app --reload --port 8000
@@ -161,8 +159,12 @@ def _b64url(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 
 def _normalize_pem(text: str) -> str:
-    return text.replace("\n", "
-") if "\n" in text else text
+    # Robustly convert "\\n" and "\n" sequences to actual newlines
+    t = text
+    t = t.replace("\\\\n", "\n")  # literal backslash-backslash-n -> newline
+    if "\\n" in t:
+        t = t.replace("\\n", "\n")
+    return t
 
 def _b64_to_text(s: str) -> str:
     s = (s or "").strip().strip('"')
@@ -565,7 +567,6 @@ async def _principal_from_request(request: Request, session: Session) -> Princip
     request.state.user_email = email
     return Principal(email=email, scopes=scopes)
 
-# Classic FastAPI dependency that mimics OAuth2PasswordBearer + cookie fallback
 async def get_current_user(request: Request, session: Session = Depends(get_session)) -> User:
     p = await _principal_from_request(request, session)
     user = session.scalar(select(User).where(User.Email_Address == p.email))
@@ -1428,8 +1429,7 @@ app.include_router(okta_router)
 @app.get("/docs", include_in_schema=False)
 async def docs(request: Request):
     try:
-        # Using our local principal resolver
-        async with Session(engine) as s:
+        with Session(engine) as s:
             await _principal_from_request(request, s)
     except HTTPException as e:
         if e.status_code == 401:
@@ -1446,7 +1446,7 @@ async def docs(request: Request):
 @app.get("/docs-dark", include_in_schema=False)
 async def docs_dark(request: Request):
     try:
-        async with Session(engine) as s:
+        with Session(engine) as s:
             await _principal_from_request(request, s)
     except HTTPException as e:
         if e.status_code == 401:
@@ -1463,7 +1463,7 @@ async def docs_dark(request: Request):
 @app.get("/docs-custom", include_in_schema=False)
 async def custom_docs(request: Request):
     try:
-        async with Session(engine) as s:
+        with Session(engine) as s:
             await _principal_from_request(request, s)
     except HTTPException as e:
         if e.status_code == 401:
