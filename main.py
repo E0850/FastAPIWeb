@@ -516,7 +516,15 @@ def agreement_out(a: Agreement) -> AgreementOut:
         Project_number=a.Project_number,
     )
 
-
+def require_scopes(required: list[str]): 
+    """Ensure the current user's JWT contains all required scopes.""" 
+    def checker(current_user: User = Depends(get_current_user)):
+        scopes = set(getattr(current_user, "Scopes", [])) 
+        if not set(required).issubset(scopes): 
+            raise HTTPException(status_code=403, detail="Insufficient scope") 
+        return current_user 
+    return checker 
+ 
 ##### BEGIN v1.txt #####
 # ================================ ROUTERS-ENDPOINTS ================================ 
 # orders 
