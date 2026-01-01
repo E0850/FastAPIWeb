@@ -68,6 +68,28 @@
 
 <!-- === Overview teaser / expand (will be moved below title by script) === -->
 <div class="api-overview" id="apiOverview">
+
+  <!-- Scoped bullet style: small squares for all lists in this section -->
+  <style>
+    /* Apply to all lists inside the overview/cite blocks only */
+    #apiOverview ul,
+    #apiOverview ol,
+    #apiOverview .desc ul,
+    #apiOverview .desc ol,
+    #apiOverview .cite ul {
+      list-style-type: square;      /* small square bullets */
+      padding-left: 1.15rem;        /* tidy indent */
+      margin-left: 0;
+    }
+    /* Make the squares visually smaller and match dark theme */
+    #apiOverview ul li::marker,
+    #apiOverview ol li::marker,
+    #apiOverview .cite ul li::marker {
+      font-size: 0.8em;
+      color: #cfd8dc;               /* subtle light grey; adjust if you want more pop */
+    }
+  </style>
+
   <h2>API Platform Overview and Key Features:</h2>
   <div id="overviewDesc" class="desc">
     <p>
@@ -115,16 +137,17 @@
       <li>Security headers &amp; secrets management: strict cookie flags and a Content‑Security‑Policy for docs; standardized secret rotation cadence.</li>
     </ul>
   </div>
-  <button id="toggleOverview" class="toggle-btn" aria-expanded="false" aria-controls="overviewDesc">Show more</button> 
+  <button id="toggleOverview" class="toggle-btn" aria-expanded="false" aria-controls="overviewDesc">Show more</button>
+
   <div class="cite">
     <h2>About the Author:</h2>
       <ul>
         <li><a href="https://www.facebook.com/share/1CxK136BPF/" target="_blank" rel="noopener noreferrer">https://www.facebook.com/share/1CxK136BPF/</a></li>
-        <li><a href="https://www.linkedin.com/in/fernando-losantos-33a746124/" target="_blank" rel="noopener noreferrer">https://www.linkedin.com/in/fernando-losantos-33a746124/</a></li >
+        <li><a href="https://www.linkedin.com/in/fernando-losantos-33a746124/" target="_blank" rel="noopener noreferrer">https://www.linkedin.com/in/fernando-losantos-33a746124/</a></li>
       </ul>
   </div>
 </div>
-
+  
   </div>
 
   <!-- === Swagger UI root === -->
