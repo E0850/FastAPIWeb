@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en" data-theme="dark">
 <head>
@@ -66,29 +65,64 @@
     <div class="login-status" id="loginStatus">Not logged in</div>
   </div>
 
-  <!-- === Overview teaser / expand (will be moved below title by script) === -->
-  <div class="api-overview" id="apiOverview">
-    <h2>API Platform Overview and Key Features:</h2>
-    <div id="overviewDesc" class="desc">
-      This API platform is built on FastAPI with SQLAlchemy ORM, Pydantic for data validation, and Alembic for database migrations.
-      It supports static files and custom Swagger UIs with configurable CORS middleware. Security includes OAuth2 Password flow with JWT (HS256),
-      password hashing via Passlib (Argon2id preferred, bcrypt fallback), bearer-protected routes controlled by REQUIRE_CLIENT_AUTH, user activation checks,
-      token revocation/versioning, and role-to-scope mapping for RBAC. Rate limiting and login protections use SlowAPI with sticky per-identity keys,
-      a custom 429 handler, and an “attempts remaining” counter. Pagination supports limit and offset, while full-field search spans multiple endpoints.
-      Error handling is consistent across 404, 409, 400, 401, and 500 responses. Additional Phase 2 enhancements include CRUD endpoints for Orders,
-      Customers, Invoices, Agreements, email-based user operations, strict CORS enforcement, secrets moved to environment variables, HTTPS at deployment layer,
-      and improved logging. Miscellaneous features include a dark-themed Swagger UI via CDN with custom CSS, favicon, and an HTML docs page.
-      Future Enhancements (Phase 3): OAuth2 Authorization Code + PKCE, IdP integration (Azure AD, Okta, Auth0), asymmetric JWT signing (RS256),
-      refresh token hygiene, fine-grained RBAC, secrets management (Vault/KMS), structured logging and tracing, containerization with Docker/Kubernetes,
-      reverse proxy with TLS, and WAF/DDoS protection.
-    </div>
-    <button id="toggleOverview" class="toggle-btn" aria-expanded="false" aria-controls="overviewDesc">Show more</button>
-    
-<div class="cite">  
-  <h2>About the Author:</h2>
-  <a href="http://www.linkedin.com/in/fernando-losantos-33a746124/" target="_blank" rel="noopener noreferrer">
-    http://www.linkedin.com/in/fernando-losantos-33a746124/
-  </a>
+
+<!-- === Overview teaser / expand (will be moved below title by script) === -->
+<div class="api-overview" id="apiOverview">
+  <h2>API Platform Overview and Key Features:</h2>
+  <div id="overviewDesc" class="desc">
+    <p>
+      The API platform is built on FastAPI with SQLAlchemy ORM, uses Pydantic for data validation, and Alembic for database migrations.
+      It supports static files and a custom Swagger UI; in production, CORS is restricted to trusted origins and secure cookie posture is enforced.
+      The current implementation delivers first‑party RS256‑signed tokens, Okta OIDC with Authorization Code + PKCE, guarded API docs, and refresh‑token hygiene.
+    </p>
+
+    <h3>Security Highlights (Current State)</h3>
+    <ul>
+      <li>OAuth2 Authorization Code + PKCE implemented for browser/client flows; nonce and <code>at_hash</code> verified during callback.</li>
+      <li>Enterprise IdP integration via Okta OIDC (metadata discovery, JWKS validation, issuer/audience enforced; optional Okta token cookies).</li>
+      <li>Asymmetric JWT signing (RS256) with <code>kid</code> header; public JWKS exposed at <code>/.well-known/jwks.json</code>; RSA keys loaded from environment variables.</li>
+      <li>Refresh-token hygiene: rotation on use, reuse detection, and server-side revocation by bumping <em>TokenVersion</em>.</li>
+      <li>Bearer-protected routes controlled by <code>REQUIRE_CLIENT_AUTH</code> with a global auth dependency.</li>
+      <li>User activation checks and token invalidation/versioning via <em>TokenVersion</em> on credential changes.</li>
+      <li>Fine-grained RBAC with role-to-scope mapping and route-level scope enforcement.</li>
+      <li>Rate limiting and login protections using SlowAPI with sticky per-identity keys, a custom 429 handler, and an “attempts remaining” counter.</li>
+    </ul>
+
+    <h3>Data &amp; UX Features</h3>
+    <ul>
+      <li>CRUD endpoints for Orders, Customers, Invoices, and Agreements.</li>
+      <li>Email-based user operations (CRUD + admin).</li>
+      <li>Pagination with limit/offset and full-field search across multiple endpoints.</li>
+      <li>Consistent error handling for 404, 409, 400, 401, and 500 responses with structured logging.</li>
+    </ul>
+
+    <h3>Deployment &amp; Operations</h3>
+    <ul>
+      <li>Hosted on Render with HTTPS enforced; API docs access is guarded.</li>
+      <li>Database on Neon PostgreSQL via <code>psycopg2</code> (SQLAlchemy engine with <code>pool_pre_ping=True</code>).</li>
+      <li>Alembic migrations for schema versioning (autogenerate and upgrade steps documented).</li>
+      <li>Health check endpoint at <code>/healthz</code>.</li>
+      <li>JWKS exposure for token validation at <code>/.well-known/jwks.json</code>.</li>
+      <li>RSA key-rotation plan (PLANNED; target Feb&nbsp;2025) with dual-sign overlap considerations.</li>
+      <li>Custom Swagger theming (dark mode &amp; branding) via CDN with CSS and an HTML docs page; optional <em>Authorize</em> button per UX preference.</li>
+    </ul>
+
+    <h3>Optional Hardening (Recommended Next)</h3>
+    <ul>
+      <li>Add <code>iss</code> and <code>aud</code> to first‑party RS256 access tokens and enforce locally during verification.</li>
+      <li>Automate RSA key rotation (new <code>kid</code>, publish JWKS, switch <code>JWT_ACTIVE_KID</code>, maintain overlap window, smoke tests).</li>
+      <li>Observability: request IDs, structured logging fields (trace/user/sub), and minimal audit logs for write operations.</li>
+      <li>Security headers &amp; secrets management: strict cookie flags and a Content‑Security‑Policy for docs; standardized secret rotation cadence.</li>
+    </ul>
+  </div>
+  <button id="toggleOverview" class="toggle-btn" aria-expanded="false" aria-controls="overviewDesc">Show more</button>
+
+  <div class="cite">
+    <h2>About the Author:</h2>
+    <a href="http://www.linkedin.com/in/fernando-losantos-33a746124/" target="_blank" rel="noopener noreferrer">
+      http://www.linkedin.com/in/fernando-losantos-33a746124/
+    </a>
+  </div>
 </div>
 
   </div>
