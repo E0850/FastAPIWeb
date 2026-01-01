@@ -117,7 +117,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 # Disable FastAPI's default /docs so we can guard it ourselves
 app = FastAPI(
-    title="API - Swagger UI - Beta Version",
+    title="Swagger UI (Production)",
     version="0.1.0",
     description=(
         "<h3>Citation/References</h3>"
